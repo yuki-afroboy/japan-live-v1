@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts",
+    "apps/web/src/**/*.ts",
+    "apps/web/src/**/*.tsx",
+    "apps/gateway/src/**/*.ts",
+    "apps/web/vite.config.ts"
+  ],
+  "compilerOptions": { "types": ["node", "vitest/globals"] }
+}
