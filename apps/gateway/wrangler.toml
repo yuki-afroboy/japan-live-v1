@@ -1,0 +1,9 @@
+name = "japan-live-gateway"
+main = "src/worker.ts"
+compatibility_date = "2026-01-01"
+
+# Set the real secret with:  wrangler secret put ODPT_CONSUMER_KEY
+# NEVER put the key in this file — it is committed.
+[vars]
+ALLOWED_ORIGINS = "http://localhost:5173"
+RATE_LIMIT_PER_MIN = "120"
