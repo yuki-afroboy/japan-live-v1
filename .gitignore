@@ -1,0 +1,38 @@
+# Secrets and local credentials — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials.json
+*service-account*.json
+.netrc
+.npmrc
+*token*.json
+*credential*.json
+
+# Local Claude Code config
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# Bulk data (commit small redacted fixtures only)
+data/raw/
+*.zip
+*.pbf
+
+# OS and editor
+.DS_Store
+Thumbs.db
+*.log
