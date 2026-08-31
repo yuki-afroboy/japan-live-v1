@@ -5,6 +5,7 @@
     "packages/*/test/**/*.ts",
     "apps/web/src/**/*.ts",
     "apps/web/src/**/*.tsx",
+    "apps/web/src/**/*.d.ts",
     "apps/gateway/src/**/*.ts",
     "apps/web/vite.config.ts"
   ],

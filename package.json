@@ -4,8 +4,14 @@
   "version": "1.0.0",
   "type": "module",
   "description": "JAPAN LIVE — a real-time Japanese digital twin. V1: TOKYO TRAINS.",
-  "workspaces": ["packages/*", "apps/web", "apps/gateway"],
-  "engines": { "node": ">=20" },
+  "workspaces": [
+    "packages/*",
+    "apps/web",
+    "apps/gateway"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "npm run dev -w @japan-live/web",
     "dev:gateway": "npm run dev -w @japan-live/gateway",
@@ -23,6 +29,7 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "vite": "^6.0.7"
   }
 }

@@ -1,0 +1,133 @@
+import * as Cesium from "cesium";
+import { CONFIG } from "../config.js";
+
+export type LayerStatus = "loading" | "ok" | "unavailable";
+
+export interface SceneHealth {
+  terrain: LayerStatus;
+  basemap: LayerStatus;
+  buildings: LayerStatus;
+  /** Human-readable reason when something is unavailable. Shown in Data Status. */
+  notes: Partial<Record<"terrain" | "basemap" | "buildings", string>>;
+}
+
+/**
+ * Creates the Cesium viewer.
+ *
+ * Every external layer is optional. Terrain, basemap, and buildings each fail to a
+ * usable state rather than throwing, because none of them is worth a white screen
+ * (spec §62, ARCHITECTURE "Failure behaviour").
+ */
+export function createViewer(container: HTMLElement): Cesium.Viewer {
+  Cesium.Ion.defaultAccessToken = CONFIG.cesiumIonToken;
+
+  const viewer = new Cesium.Viewer(container, {
+    // The product is the globe. Every Cesium chrome widget is off; our own UI replaces it.
+    animation: false,
+    timeline: false,
+    baseLayerPicker: false,
+    fullscreenButton: false,
+    geocoder: false,
+    homeButton: false,
+    infoBox: false,
+    sceneModePicker: false,
+    selectionIndicator: false,
+    navigationHelpButton: false,
+    navigationInstructionsInitiallyVisible: false,
+    creditContainer: document.createElement("div"), // credits are rendered by our own UI
+    baseLayer: false,
+    // Only render when something changed. This is the single biggest power and
+    // battery win on a map that is often still.
+    requestRenderMode: true,
+    maximumRenderTimeChange: 0.5,
+    contextOptions: {
+      webgl: { powerPreference: "high-performance", antialias: true },
+    },
+  });
+
+  const scene = viewer.scene;
+  scene.globe.baseColor = Cesium.Color.fromCssColorString("#0a1120");
+  scene.backgroundColor = Cesium.Color.fromCssColorString("#04060c");
+  if (scene.skyAtmosphere) scene.skyAtmosphere.show = true;
+  scene.fog.enabled = true;
+  scene.fog.density = 0.0002;
+  scene.globe.showGroundAtmosphere = true;
+  scene.globe.depthTestAgainstTerrain = true;
+  // Underground trains are drawn below the surface; the globe must not hide them
+  // completely, and X-Ray mode raises translucency further.
+  scene.globe.translucency.enabled = false;
+  scene.highDynamicRange = false;
+
+  scene.screenSpaceCameraController.enableCollisionDetection = true;
+  scene.screenSpaceCameraController.minimumZoomDistance = 40;
+  scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000;
+
+  // Cap device pixel ratio: a 3x phone screen renders 9x the pixels for no visible gain.
+  viewer.resolutionScale = Math.min(window.devicePixelRatio ?? 1, 1.75);
+
+  return viewer;
+}
+
+/**
+ * PLATEAU nationwide terrain, with a fallback to a smooth ellipsoid.
+ * Japan without its mountains is a worse product, but it is still a product.
+ */
+export async function installTerrain(
+  viewer: Cesium.Viewer,
+): Promise<{ status: LayerStatus; note?: string }> {
+  try {
+    const provider = CONFIG.terrainUrl
+      ? await Cesium.CesiumTerrainProvider.fromUrl(CONFIG.terrainUrl, { requestVertexNormals: true })
+      : await Cesium.CesiumTerrainProvider.fromIonAssetId(CONFIG.plateauTerrainAssetId, {
+          requestVertexNormals: true,
+        });
+    viewer.scene.terrainProvider = provider;
+    // Vertex normals give the terrain its shading; without them Japan looks flat even
+    // when the heights are correct.
+    viewer.scene.globe.enableLighting = true;
+    return { status: "ok" };
+  } catch (err) {
+    viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+    return {
+      status: "unavailable",
+      note: `地形を取得できませんでした（${errName(err)}）。地形なしで表示しています。`,
+    };
+  }
+}
+
+/** 地理院タイル over a dark base, so the ocean and out-of-coverage areas stay legible. */
+export function installBasemap(viewer: Cesium.Viewer): { status: LayerStatus; note?: string } {
+  try {
+    const provider = new Cesium.UrlTemplateImageryProvider({
+      url: CONFIG.gsiTileUrl,
+      maximumLevel: CONFIG.gsiMaxZoom,
+      credit: new Cesium.Credit("地理院タイル (国土地理院)", false),
+    });
+
+    const layer = viewer.imageryLayers.addImageryProvider(provider);
+    // The pale GSI map is designed for paper-white backgrounds. Darkening and
+    // desaturating it lets the rail lines and trains carry the colour instead.
+    layer.brightness = 0.42;
+    layer.saturation = 0.55;
+    layer.contrast = 1.16;
+    layer.gamma = 0.85;
+
+    let failed = false;
+    provider.errorEvent.addEventListener(() => {
+      // Individual tiles 404 outside Japan by design; only report a total failure once.
+      if (!failed) failed = true;
+    });
+
+    return { status: "ok" };
+  } catch (err) {
+    return {
+      status: "unavailable",
+      note: `ベースマップを取得できませんでした（${errName(err)}）。地図なしで表示しています。`,
+    };
+  }
+}
+
+export function errName(err: unknown): string {
+  if (err instanceof Error) return err.message.slice(0, 80) || err.name;
+  return "unknown error";
+}
