@@ -9,7 +9,42 @@ export interface StaticTransitData {
   meta: DatasetMeta;
   railways: Railway[];
   stations: Station[];
+  /**
+   * Fully materialized trips. Usually empty: a whole service day of individual trips is
+   * tens of megabytes, so timetables ship as `patterns` and are expanded on demand.
+   */
   trips: Trip[];
+  /** Repeating timetable patterns, expanded to `Trip`s for the active time window only. */
+  patterns?: TripPattern[];
+}
+
+/**
+ * A repeating service: one stopping pattern, run every `headwaySec` across a window.
+ *
+ * Storing the timetable this way keeps the dataset small and, more importantly, means
+ * only the few hundred trains actually running at time T are ever materialized —
+ * which is what makes V2's thousands of vehicles tractable on the same code.
+ */
+export interface TripPattern {
+  id: string;
+  railwayId: string;
+  direction: 1 | -1;
+  serviceId: string;
+  trainType?: string;
+  destinationStationId?: string;
+  /** Stop offsets in seconds from the first departure of a run. */
+  stops: PatternStop[];
+  /** Service-day second of the first run's departure. */
+  firstDepartureSec: number;
+  /** Service-day second of the last run's departure. May exceed 86400. */
+  lastDepartureSec: number;
+  headwaySec: number;
+}
+
+export interface PatternStop {
+  stationId: string;
+  arrivalOffsetSec: number;
+  departureOffsetSec: number;
 }
 
 export interface DatasetMeta {
