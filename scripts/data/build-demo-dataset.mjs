@@ -12,7 +12,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { LINES, STATIONS, displayName } from "./tokyo-rail-source.mjs";
+import { LINES, ROMAJI, STATIONS, displayName } from "./tokyo-rail-source.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(HERE, "../../apps/web/public/data/demo-dataset.json");
@@ -118,6 +118,7 @@ for (const line of LINES) {
       stationsOut.set(id, {
         id,
         name,
+        nameEn: ROMAJI[name],
         latitude: src[1],
         longitude: src[0],
         railwayIds: [line.id],

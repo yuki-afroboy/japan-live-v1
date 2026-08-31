@@ -283,3 +283,68 @@ export const LINES = [
     stations: ["和光市F","地下鉄成増F","地下鉄赤塚F","平和台F","氷川台F","小竹向原F","千川F","要町F","池袋F","雑司が谷","西早稲田","東新宿F","新宿三丁目F","北参道F","明治神宮前F","渋谷F"],
   },
 ];
+
+/**
+ * Romanized station names.
+ *
+ * ODPT identifies stations romanized (`odpt.Station:Toei.Oedo.Roppongi`), so the
+ * realtime adapter needs these to match a live record to a station in the dataset.
+ * They also drive English display and search. The real ODPT pipeline instead writes an
+ * exact `odptStationId` per station and does not rely on name matching.
+ */
+export const ROMAJI = {
+  "西馬込":"Nishi-magome","馬込":"Magome","中延":"Nakanobu","戸越":"Togoshi","五反田":"Gotanda",
+  "高輪台":"Takanawadai","泉岳寺":"Sengakuji","三田":"Mita","大門":"Daimon","新橋":"Shimbashi",
+  "東銀座":"Higashi-ginza","宝町":"Takaracho","日本橋":"Nihombashi","人形町":"Ningyocho",
+  "東日本橋":"Higashi-nihombashi","浅草橋":"Asakusabashi","蔵前":"Kuramae","浅草":"Asakusa",
+  "本所吾妻橋":"Honjo-azumabashi","押上":"Oshiage","目黒":"Meguro","白金台":"Shirokanedai",
+  "白金高輪":"Shirokane-takanawa","芝公園":"Shibakoen","内幸町":"Uchisaiwaicho","日比谷":"Hibiya",
+  "大手町":"Otemachi","神保町":"Jimbocho","水道橋":"Suidobashi","春日":"Kasuga","白山":"Hakusan",
+  "千石":"Sengoku","巣鴨":"Sugamo","西巣鴨":"Nishi-sugamo","新板橋":"Shin-itabashi",
+  "板橋区役所前":"Itabashi-kuyakushomae","板橋本町":"Itabashi-honcho","本蓮沼":"Motohasunuma",
+  "志村坂上":"Shimura-sakaue","志村三丁目":"Shimura-sanchome","蓮根":"Hasune","西台":"Nishidai",
+  "高島平":"Takashimadaira","新高島平":"Shin-takashimadaira","西高島平":"Nishi-takashimadaira",
+  "新宿":"Shinjuku","新宿三丁目":"Shinjuku-sanchome","曙橋":"Akebonobashi","市ヶ谷":"Ichigaya",
+  "九段下":"Kudanshita","小川町":"Ogawamachi","岩本町":"Iwamotocho","馬喰横山":"Bakuro-yokoyama",
+  "浜町":"Hamacho","森下":"Morishita","菊川":"Kikukawa","住吉":"Sumiyoshi","西大島":"Nishi-ojima",
+  "大島":"Ojima","東大島":"Higashi-ojima","船堀":"Funabori","一之江":"Ichinoe","瑞江":"Mizue",
+  "篠崎":"Shinozaki","本八幡":"Motoyawata","光が丘":"Hikarigaoka","練馬春日町":"Nerima-kasugacho",
+  "豊島園":"Toshimaen","練馬":"Nerima","新江古田":"Shin-egota","落合南長崎":"Ochiai-minami-nagasaki",
+  "中井":"Nakai","東中野":"Higashi-nakano","中野坂上":"Nakano-sakaue","西新宿五丁目":"Nishi-shinjuku-gochome",
+  "都庁前":"Tochomae","新宿西口":"Shinjuku-nishiguchi","東新宿":"Higashi-shinjuku",
+  "若松河田":"Wakamatsu-kawada","牛込柳町":"Ushigome-yanagicho","牛込神楽坂":"Ushigome-kagurazaka",
+  "飯田橋":"Iidabashi","本郷三丁目":"Hongo-sanchome","上野御徒町":"Ueno-okachimachi",
+  "新御徒町":"Shin-okachimachi","両国":"Ryogoku","清澄白河":"Kiyosumi-shirakawa",
+  "門前仲町":"Monzen-nakacho","月島":"Tsukishima","勝どき":"Kachidoki","築地市場":"Tsukijishijo",
+  "汐留":"Shiodome","赤羽橋":"Akabanebashi","麻布十番":"Azabu-juban","六本木":"Roppongi",
+  "青山一丁目":"Aoyama-itchome","国立競技場":"Kokuritsu-kyogijo","代々木":"Yoyogi",
+  "渋谷":"Shibuya","表参道":"Omote-sando","外苑前":"Gaiemmae","赤坂見附":"Akasaka-mitsuke",
+  "溜池山王":"Tameike-sanno","虎ノ門":"Toranomon","銀座":"Ginza","京橋":"Kyobashi",
+  "三越前":"Mitsukoshimae","神田":"Kanda","末広町":"Suehirocho","上野広小路":"Ueno-hirokoji",
+  "上野":"Ueno","稲荷町":"Inaricho","田原町":"Tawaramachi","荻窪":"Ogikubo",
+  "南阿佐ケ谷":"Minami-asagaya","新高円寺":"Shin-koenji","東高円寺":"Higashi-koenji",
+  "新中野":"Shin-nakano","西新宿":"Nishi-shinjuku","新宿御苑前":"Shinjuku-gyoemmae",
+  "四谷三丁目":"Yotsuya-sanchome","四ツ谷":"Yotsuya","国会議事堂前":"Kokkai-gijidomae",
+  "霞ケ関":"Kasumigaseki","東京":"Tokyo","淡路町":"Awajicho","御茶ノ水":"Ochanomizu",
+  "後楽園":"Korakuen","茗荷谷":"Myogadani","新大塚":"Shin-otsuka","池袋":"Ikebukuro",
+  "中目黒":"Naka-meguro","恵比寿":"Ebisu","広尾":"Hiroo","神谷町":"Kamiyacho","築地":"Tsukiji",
+  "八丁堀":"Hatchobori","茅場町":"Kayabacho","小伝馬町":"Kodemmacho","秋葉原":"Akihabara",
+  "仲御徒町":"Naka-okachimachi","入谷":"Iriya","三ノ輪":"Minowa","南千住":"Minami-senju",
+  "北千住":"Kita-senju","中野":"Nakano","落合":"Ochiai","高田馬場":"Takadanobaba","早稲田":"Waseda",
+  "神楽坂":"Kagurazaka","竹橋":"Takebashi","木場":"Kiba","東陽町":"Toyocho","南砂町":"Minami-sunamachi",
+  "西葛西":"Nishi-kasai","葛西":"Kasai","浦安":"Urayasu","南行徳":"Minami-gyotoku","行徳":"Gyotoku",
+  "妙典":"Myoden","原木中山":"Baraki-nakayama","西船橋":"Nishi-funabashi","代々木上原":"Yoyogi-uehara",
+  "代々木公園":"Yoyogi-koen","明治神宮前":"Meiji-jingumae","乃木坂":"Nogizaka","赤坂":"Akasaka",
+  "二重橋前":"Nijubashimae","新御茶ノ水":"Shin-ochanomizu","湯島":"Yushima","根津":"Nezu",
+  "千駄木":"Sendagi","西日暮里":"Nishi-nippori","町屋":"Machiya","綾瀬":"Ayase","和光市":"Wakoshi",
+  "地下鉄成増":"Chikatetsu-narimasu","地下鉄赤塚":"Chikatetsu-akatsuka","平和台":"Heiwadai",
+  "氷川台":"Hikawadai","小竹向原":"Kotake-mukaihara","千川":"Senkawa","要町":"Kanamecho",
+  "東池袋":"Higashi-ikebukuro","護国寺":"Gokokuji","江戸川橋":"Edogawabashi","麹町":"Kojimachi",
+  "永田町":"Nagatacho","桜田門":"Sakuradamon","有楽町":"Yurakucho","銀座一丁目":"Ginza-itchome",
+  "新富町":"Shintomicho","豊洲":"Toyosu","辰巳":"Tatsumi","新木場":"Shin-kiba","半蔵門":"Hanzomon",
+  "水天宮前":"Suitengumae","錦糸町":"Kinshicho","六本木一丁目":"Roppongi-itchome","東大前":"Todaimae",
+  "本駒込":"Hon-komagome","駒込":"Komagome","西ケ原":"Nishigahara","王子":"Oji","王子神谷":"Oji-kamiya",
+  "志茂":"Shimo","赤羽岩淵":"Akabane-iwabuchi","西早稲田":"Nishi-waseda","雑司が谷":"Zoshigaya",
+  "北参道":"Kita-sando","浜松町":"Hamamatsucho","品川":"Shinagawa","大崎":"Osaki","原宿":"Harajuku",
+  "大久保":"Okubo","市ケ谷":"Ichigaya",
+};

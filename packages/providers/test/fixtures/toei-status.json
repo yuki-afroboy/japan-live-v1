@@ -1,0 +1,17 @@
+[
+  {
+    "@id": "urn:ucode:_status_oedo",
+    "dc:date": "2026-08-18T07:29:00+09:00",
+    "odpt:operator": "odpt.Operator:Toei",
+    "odpt:railway": "odpt.Railway:Toei.Oedo",
+    "odpt:trainInformationStatus": { "ja": "遅延", "en": "Delay" },
+    "odpt:trainInformationText": { "ja": "現在、約5分の遅れが発生しています。", "en": "Approx. 5 min delay." }
+  },
+  {
+    "@id": "urn:ucode:_status_asakusa",
+    "dc:date": "2026-08-18T07:29:00+09:00",
+    "odpt:railway": "odpt.Railway:Toei.Asakusa",
+    "odpt:trainInformationText": "平常どおり運転しています。"
+  },
+  { "@id": "urn:ucode:_status_empty", "odpt:railway": "odpt.Railway:Toei.Mita" }
+]
