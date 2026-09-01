@@ -99,6 +99,11 @@ Path-scoped detail lives in `.claude/rules/` and loads when working in those tre
   subagents read-only research or review scope.
 - **Build, test, and visually verify meaningful changes** before calling them done. For
   anything that renders, actually look at it — a passing build is not verification.
+- **Wait for long commands; do not poll them.** Block on completion (a wait/until
+  condition, a background task's own notification) rather than re-checking status every
+  few seconds, and skip the running commentary. If a status check is genuinely needed,
+  leave a generous interval. Report the final result once the run finishes — and
+  intervene mid-run only on an error.
 - Agent Teams stay off for V1. Reconsider for V2 once the architecture has settled.
 - Add MCP servers, plugins, frameworks, and dependencies only when a task genuinely
   needs one. Prefer what is already here.
