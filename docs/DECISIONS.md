@@ -239,10 +239,17 @@ failed a skyline that was rendering correctly.
 - `scene.pick` across a screen grid — is 3D Tiles geometry genuinely under the pixels?
 - `scene.pickPosition` — do the surfaces there stand above ground? (215.8 m measured
   against a fixture whose tallest tower is 250 m.)
-- ON/OFF **pixel difference ratio** — direction-agnostic, so it cannot be fooled by
-  whether an overlay adds or removes variety.
+- ON/OFF geometry cycle — present, gone, present again.
 
-The same change applies to the rail and X-Ray tests, which had the same flaw.
+**A pixel difference ratio was tried next and also abandoned.** It is direction-agnostic,
+which fixes the first problem, but it cannot isolate a layer at all: measured on CI at
+Shinjuku, trains moving change 40.7% of pixels over 2.5 s while removing the ENTIRE rail
+layer changes 9.4%. Motion swamps any layer's contribution, so no threshold works in
+either direction. There is now no frame-capture helper in the suite.
+
+The rail and X-Ray tests are asserted the same way — through scene state and picking:
+visible route/station primitive counts, station points picked at their own projected
+screen positions, globe translucency, and the height underground track is drawn at.
 
 **And a test of the test.** `e2e/probe-check.spec.ts` runs the probe with PLATEAU blocked
 and requires zero hits, no height, and no frame change. An assertion that passes whether

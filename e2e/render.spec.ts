@@ -1,11 +1,5 @@
 import { expect, test } from "@playwright/test";
-import {
-  blockPlateau,
-  captureFrame,
-  frameDiffRatio,
-  measureDrift,
-  readXrayState,
-} from "./helpers.js";
+import { blockPlateau, probeRail, readXrayState } from "./helpers.js";
 
 /**
  * Does the scene actually DRAW anything?
@@ -105,24 +99,32 @@ test("the rail network is drawn over Tokyo", async ({ page }) => {
   await page.getByRole("button", { name: "新宿", exact: true }).click();
   await page.waitForTimeout(7_000);
 
-  // How much does the frame change on its own? Trains never stop moving — that is the
-  // product — so this is the floor any layer change has to clear. Without the control,
-  // `diff > 0.01` passes on animation alone and proves nothing about the rail layers.
-  const drift = await measureDrift(page, 2_500);
+  // Not a full-frame pixel diff. Measured on CI: trains moving change 40.7% of pixels
+  // over 2.5 s while removing the entire rail layer changes 9.4%, so motion swamps the
+  // signal and no whole-frame threshold can isolate a layer. Instead: count the
+  // primitives the layer owns, and pick at station points' own projected positions —
+  // a pick goes through the render pipeline, so a hit proves it is really drawn there.
+  const on = await probeRail(page);
+  expect(on.visibleRoutes, "no rail routes are visible over Tokyo").toBeGreaterThan(5);
+  expect(on.visibleStations).toBeGreaterThan(20);
+  expect(on.stationPickHits, "station points are not actually rendered").toBeGreaterThan(0);
 
-  await captureFrame(page, "rail-on");
   await page.getByRole("button", { name: "鉄道路線 Railways" }).click();
   await page.getByRole("button", { name: "駅 Stations" }).click();
-  await page.getByRole("button", { name: "列車 Trains" }).click();
   await page.waitForTimeout(2_500);
-  await captureFrame(page, "rail-off");
 
-  const change = await frameDiffRatio(page, "rail-on", "rail-off");
-  expect(
-    change,
-    `removing rail, stations and trains changed the frame no more than motion alone ` +
-      `(change ${change.toFixed(3)} vs drift ${drift.toFixed(3)})`,
-  ).toBeGreaterThan(drift * 1.5);
+  const off = await probeRail(page);
+  expect(off.visibleRoutes, "routes stayed visible after being switched off").toBe(0);
+  expect(off.visibleStations).toBe(0);
+  expect(off.stationPickHits).toBe(0);
+
+  await page.getByRole("button", { name: "鉄道路線 Railways" }).click();
+  await page.getByRole("button", { name: "駅 Stations" }).click();
+  await page.waitForTimeout(3_000);
+
+  const back = await probeRail(page);
+  expect(back.visibleRoutes, "routes did not come back").toBeGreaterThan(5);
+  expect(back.stationPickHits).toBeGreaterThan(0);
 });
 
 test("trains are drawn at the Kanto scale, not only close in", async ({ page }) => {
@@ -136,32 +138,34 @@ test("trains are drawn at the Kanto scale, not only close in", async ({ page }) 
   expect(stats).not.toContain("aggregate");
 });
 
-test("X-Ray changes the scene, and changes the state it is supposed to", async ({ page }) => {
+test("X-Ray raises underground track and makes the globe translucent", async ({ page }) => {
   await boot(page);
   await page.getByRole("button", { name: "新宿", exact: true }).click();
   await page.waitForTimeout(7_000);
 
-  // X-Ray makes the globe translucent so the underground network reads through it.
-  // Asserting that directly is deterministic; asserting on pixels alone is not,
-  // because trains move whether or not X-Ray does anything.
+  // X-Ray does two specific things: it lifts underground track clear of the surface and
+  // makes the globe translucent so the network reads through it. Both are directly
+  // observable in scene state, which is far stronger than asking whether some pixels
+  // changed in a scene that changes on its own.
   const before = await readXrayState(page);
   expect(before.translucencyEnabled).toBe(false);
-
-  const drift = await measureDrift(page, 2_500);
-  await captureFrame(page, "xray-off");
+  expect(before.routeHeight).toBeLessThan(40);
 
   await page.getByRole("button", { name: "地下鉄 X-RAY" }).click();
-  await page.waitForTimeout(2_500);
-  await captureFrame(page, "xray-on");
+  await page.waitForTimeout(3_000);
 
   const after = await readXrayState(page);
   expect(after.translucencyEnabled).toBe(true);
   expect(after.frontFaceAlpha).toBeLessThan(before.frontFaceAlpha);
-
-  const change = await frameDiffRatio(page, "xray-off", "xray-on");
   expect(
-    change,
-    `X-Ray changed the frame no more than motion alone ` +
-      `(change ${change.toFixed(3)} vs drift ${drift.toFixed(3)})`,
-  ).toBeGreaterThan(drift * 1.2);
+    after.routeHeight,
+    "underground track was not raised, so X-Ray projected nothing",
+  ).toBeGreaterThan(before.routeHeight + 30);
+
+  // And it is reversible.
+  await page.getByRole("button", { name: "地下鉄 X-RAY" }).click();
+  await page.waitForTimeout(3_000);
+  const reverted = await readXrayState(page);
+  expect(reverted.translucencyEnabled).toBe(false);
+  expect(reverted.routeHeight).toBeLessThan(40);
 });

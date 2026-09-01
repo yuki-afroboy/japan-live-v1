@@ -82,74 +82,20 @@ export async function serveTestTileset(
   );
 }
 
-export interface FrameStats {
-  lit: number;
-  distinctColors: number;
-}
-
-/**
- * Force a render, then capture the frame into the page for later comparison.
+/*
+ * There is no frame-capture / pixel-diff helper here, and that is deliberate.
  *
- * The scene renders on demand, so without an explicit request this samples whatever
- * was last drawn, which may be nothing.
+ * An earlier version had one, and every assertion built on it was either wrong or
+ * meaningless. JAPAN LIVE animates trains continuously — that IS the product — so the
+ * frame changes on its own. Measured on CI at Shinjuku: 40.7% of pixels differ over
+ * 2.5 s with nothing toggled, while removing the ENTIRE rail layer changes 9.4%. Motion
+ * swamps the signal, so no threshold on a whole-frame diff can isolate a layer:
+ * `diff > 0.01` passes whether or not the feature works, and `diff < 0.02` fails even
+ * when it does.
+ *
+ * Everything visual is asserted through scene state and picking instead — see
+ * `probeGeometry`, `probeRail` and `readXrayState`, and docs/DECISIONS.md D-015.
  */
-export async function captureFrame(page: Page, slot: string): Promise<FrameStats> {
-  await page.evaluate(() => (window as any).__viewer?.scene?.requestRender());
-  await page.waitForTimeout(600);
-  return page.evaluate((key: string) => {
-    const source = document.querySelector(".cesium-widget canvas") as HTMLCanvasElement;
-    const off = document.createElement("canvas");
-    off.width = 320;
-    off.height = 200;
-    const ctx = off.getContext("2d")!;
-    ctx.drawImage(source, 0, 0, off.width, off.height);
-    const data = ctx.getImageData(0, 0, off.width, off.height).data;
-
-    const store = ((window as any).__frames ??= {});
-    store[key] = Array.from(data);
-
-    let lit = 0;
-    const colors = new Set<number>();
-    for (let i = 0; i < data.length; i += 4) {
-      if (data[i]! + data[i + 1]! + data[i + 2]! > 45) lit++;
-      colors.add(((data[i]! >> 3) << 10) | ((data[i + 1]! >> 3) << 5) | (data[i + 2]! >> 3));
-    }
-    return { lit: lit / (data.length / 4), distinctColors: colors.size };
-  }, slot);
-}
-
-/**
- * Fraction of pixels that differ meaningfully between two captured frames.
- *
- * IMPORTANT: never assert on this alone. JAPAN LIVE animates trains continuously — that
- * is the product — so two frames a few seconds apart differ by roughly 20% with nothing
- * toggled at all. A bare `diff > 0.01` therefore passes whether or not the feature under
- * test works, and a bare `diff < 0.02` fails even when it does.
- *
- * Use it only against a same-interval motion baseline from `measureDrift`, or prefer
- * `probeGeometry` / direct scene state, which do not move on their own.
- */
-export async function frameDiffRatio(page: Page, a: string, b: string): Promise<number> {
-  return page.evaluate(
-    ([keyA, keyB]: [string, string]) => {
-      const store = (window as any).__frames ?? {};
-      const first: number[] = store[keyA];
-      const second: number[] = store[keyB];
-      if (!first || !second || first.length !== second.length) return -1;
-      let changed = 0;
-      const pixels = first.length / 4;
-      for (let i = 0; i < first.length; i += 4) {
-        const d =
-          Math.abs(first[i]! - second[i]!) +
-          Math.abs(first[i + 1]! - second[i + 1]!) +
-          Math.abs(first[i + 2]! - second[i + 2]!);
-        if (d > 24) changed++;
-      }
-      return changed / pixels;
-    },
-    [a, b] as [string, string],
-  );
-}
 
 export interface GeometryProbe {
   /** Screen samples that landed on 3D Tiles geometry. */
@@ -245,15 +191,117 @@ export async function toggleLayer(page: Page, label: string): Promise<void> {
   await page.getByRole("button", { name: label }).click();
 }
 
-/** Read the scene state that X-Ray actually manipulates. Deterministic, unlike pixels. */
-export async function readXrayState(
-  page: Page,
-): Promise<{ translucencyEnabled: boolean; frontFaceAlpha: number }> {
+/**
+ * Read the scene state X-Ray actually manipulates: globe translucency, and the height
+ * underground track is drawn at. Deterministic, unlike a pixel comparison in a scene
+ * where trains never stop moving.
+ */
+export async function readXrayState(page: Page): Promise<{
+  translucencyEnabled: boolean;
+  frontFaceAlpha: number;
+  routeHeight: number;
+}> {
+  await page.evaluate(() => (window as any).__viewer?.scene?.requestRender());
+  await page.waitForTimeout(400);
   return page.evaluate(() => {
-    const globe = (window as any).__viewer.scene.globe;
+    const viewer = (window as any).__viewer;
+    const Cesium = (window as any).Cesium;
+    const scene = viewer.scene;
+
+    let routeHeight = Number.NaN;
+    for (let i = 0; i < scene.primitives.length && Number.isNaN(routeHeight); i++) {
+      const collection = scene.primitives.get(i);
+      if (!collection || typeof collection.get !== "function") continue;
+      const first = collection.get(0);
+      if (!first || !("positions" in first) || !("width" in first)) continue;
+      const position = first.positions?.[0];
+      if (position) routeHeight = Cesium.Cartographic.fromCartesian(position).height;
+    }
+
     return {
-      translucencyEnabled: Boolean(globe.translucency.enabled),
-      frontFaceAlpha: Number(globe.translucency.frontFaceAlpha),
+      translucencyEnabled: Boolean(scene.globe.translucency.enabled),
+      frontFaceAlpha: Number(scene.globe.translucency.frontFaceAlpha),
+      routeHeight,
     };
+  });
+}
+
+export interface RailProbe {
+  /** Rail route polylines currently visible. */
+  visibleRoutes: number;
+  /** Station point primitives currently visible. */
+  visibleStations: number;
+  /**
+   * Station points that were actually pickable at their own projected screen position.
+   * This is a rendering proof: a pick goes through the render pipeline, so a hit means
+   * the primitive really is drawn at that pixel.
+   */
+  stationPickHits: number;
+  stationPickAttempts: number;
+}
+
+/**
+ * What the rail layers are actually doing in the scene.
+ *
+ * Deliberately not a full-frame pixel diff. Measured on CI: trains moving change 40.7%
+ * of pixels over 2.5 s, while removing the entire rail layer changes 9.4% — motion
+ * swamps the signal, so no threshold on a whole-frame diff can isolate a layer.
+ *
+ * Instead: count the primitives the layer owns, and pick at the exact projected
+ * position of station points rather than hoping a sampling grid lands on a thin line.
+ */
+export async function probeRail(page: Page): Promise<RailProbe> {
+  await page.evaluate(() => (window as any).__viewer?.scene?.requestRender());
+  await page.waitForTimeout(600);
+  return page.evaluate(() => {
+    const viewer = (window as any).__viewer;
+    const Cesium = (window as any).Cesium;
+    const scene = viewer.scene;
+
+    let visibleRoutes = 0;
+    let visibleStations = 0;
+    let stationPickHits = 0;
+    let stationPickAttempts = 0;
+
+    for (let i = 0; i < scene.primitives.length; i++) {
+      const collection = scene.primitives.get(i);
+      if (!collection || typeof collection.get !== "function" || typeof collection.length !== "number") {
+        continue;
+      }
+      const first = collection.get(0);
+      if (!first) continue;
+
+      // Polyline is the only one of these with `positions`. Billboard also has `width`,
+      // which is what made an earlier version count 356 trains as rail lines.
+      const isPolyline = "positions" in first && "width" in first;
+      const isPoint = "pixelSize" in first && !("image" in first);
+
+      if (isPolyline && collection.show) {
+        for (let j = 0; j < collection.length; j++) {
+          if (collection.get(j)?.show) visibleRoutes++;
+        }
+      } else if (isPoint && collection.show) {
+        for (let j = 0; j < collection.length && stationPickAttempts < 12; j++) {
+          const point = collection.get(j);
+          if (!point?.show || !point.position) continue;
+          visibleStations++;
+
+          const win = Cesium.SceneTransforms.worldToWindowCoordinates(scene, point.position);
+          if (!win) continue;
+          if (win.x < 10 || win.y < 10 || win.x > scene.canvas.clientWidth - 10) continue;
+          if (win.y > scene.canvas.clientHeight - 10) continue;
+
+          stationPickAttempts++;
+          const picked = scene.pick(win);
+          if (picked?.id?.kind === "station") stationPickHits++;
+        }
+        // Count the rest without picking; picking every station is far too slow.
+        for (let j = 0; j < collection.length; j++) {
+          if (j >= 12 && collection.get(j)?.show) visibleStations++;
+        }
+      }
+    }
+
+    return { visibleRoutes, visibleStations, stationPickHits, stationPickAttempts };
   });
 }
