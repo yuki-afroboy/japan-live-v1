@@ -52,11 +52,15 @@ export function createViewer(container: HTMLElement): Cesium.Viewer {
         // Nearly cosmetic on its own — see scene.msaaSamples below, which is the
         // setting that actually costs fragments. See docs/PERFORMANCE.md.
         antialias: profile.antialias,
-        // preserveDrawingBuffer used to be enabled under ?debug for pixel readback.
-        // D-015 deleted the last frame-capture helper, and the screenshot specs run
-        // without it, so it is now pure cost: an extra full-size buffer copy per
-        // frame that nothing reads.
-        preserveDrawingBuffer: false,
+        // Reading pixels back needs the buffer preserved, which costs performance, so
+        // it is enabled only for the visual-regression tests that ask for it.
+        //
+        // This was removed once, on the belief that D-015 had deleted the last
+        // consumer. It had not: render.spec.ts still samples the canvas with
+        // drawImage to catch a black globe, which is the one failure mode every
+        // DOM-based test passes straight through. The E2E caught it. Production never
+        // sets ?debug, so this costs a real user nothing.
+        preserveDrawingBuffer: new URLSearchParams(location.search).has("debug"),
       },
     },
   });

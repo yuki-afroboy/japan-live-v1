@@ -362,7 +362,11 @@ in twelve seconds**. Every continuously rendered frame comes from the animation 
   changelog line claiming antialiasing was disabled while 4× MSAA kept running.
 - Train-only render cadence capped at 30 Hz on mobile, bypassed entirely while the
   camera is moving, following, or flying.
-- `preserveDrawingBuffer` removed — dead since D-015.
+- `preserveDrawingBuffer` was removed as dead code and then put back. It is not dead:
+  `render.spec.ts` samples the canvas to catch a black globe, and two render tests went
+  red. Production never sets `?debug`, so it costs a user nothing. Its removal had also
+  inflated the first "after" sweep, which ran under `?debug` with the flag off against
+  a baseline that had it on; the published numbers are the re-measurement.
 
 The train-loop colour caching was kept, but it is filed as **V2 scalability**, not as a
 V1 performance fix, because 0.5 ms of 300 is not a fix. Saying otherwise would make the

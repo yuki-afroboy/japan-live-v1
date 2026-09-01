@@ -84,20 +84,21 @@ relative numbers, and two of the changes cannot show up here at all.
 
 | # | Scenario | fps before → after | median before → after | change |
 | --- | --- | ---: | ---: | ---: |
-| 1 | 東京広域 (42 km) | 4.3 → **6.3** | 222.9 → **153.6 ms** | **−31%** frame time |
-| 2 | 東京駅 (850 m) | 3.5 → **5.5** | 276.1 → **178.9 ms** | **−35%** |
-| 3 | 新宿 (900 m) | 3.3 → **5.3** | 296.2 → **183.7 ms** | **−38%** |
-| 4 | CITY VIEW | 3.2 → **4.9** | 300.7 → **197.0 ms** | **−35%** |
-| 5 | CITY VIEW − buildings | 3.5 → **5.5** | 272.0 → **176.4 ms** | −35% |
-| 6 | CITY VIEW − trains | idle | 277.3 → **190.1 ms** | −31% (one frame either way) |
-| 7 | CITY VIEW − rail/stations | 2.8 → **5.5** | 302.8 → **177.4 ms** | −41% |
-| 8 | CITY VIEW − buildings − trains | idle | 293.3 → **172.6 ms** | −41% (one frame either way) |
+| 1 | 東京広域 (42 km) | 4.3 → **6.4** | 222.9 → **151.7 ms** | **−32%** frame time |
+| 2 | 東京駅 (850 m) | 3.5 → **5.6** | 276.1 → **174.0 ms** | **−37%** |
+| 3 | 新宿 (900 m) | 3.3 → **5.2** | 296.2 → **188.3 ms** | **−36%** |
+| 4 | CITY VIEW | 3.2 → **4.9** | 300.7 → **197.5 ms** | **−34%** |
+| 5 | CITY VIEW − buildings | 3.5 → **5.7** | 272.0 → **169.9 ms** | −38% |
+| 6 | CITY VIEW − trains | idle | 277.3 → **174.5 ms** | −37% (one frame either way) |
+| 7 | CITY VIEW − rail/stations | 2.8 → **5.4** | 302.8 → **180.3 ms** | −40% |
+| 8 | CITY VIEW − buildings − trains | idle | 293.3 → **180.5 ms** | −38% (one frame either way) |
 
 Roughly **a third off the frame time everywhere**, and the mobile ward budget behaved:
 3 wards resident instead of 4.
 
-Our own CPU per frame went 0.66 → 0.50 ms at CITY VIEW. Real, and still 0.25% of the
-frame — which is the point of reporting it rather than leading with it.
+Our own CPU per frame at CITY VIEW: 0.66 → 0.71 ms, i.e. unchanged inside the noise.
+The colour cache is real but it is 0.5 ms of a 200 ms frame, and saying so is the point
+of measuring it rather than leading with it.
 
 Desktop, where nothing was tuned, came back flat — which is the control this needed:
 
@@ -142,7 +143,6 @@ Both are device-side, and both are why the PERFORMANCE panel exists.
 | `scene.msaaSamples` 4 → **1** and FXAA **off** on mobile | Cesium renders into its own target with 4× MSAA by default, then runs a full-screen FXAA pass. That is 4× the fragment and bandwidth cost of the whole scene to smooth edges the eye cannot resolve at phone pixel density. | Yes. |
 | WebGL context `antialias` **off** on mobile | Almost nothing on its own — see below. Kept so the context stops allocating a multisample surface Cesium barely draws to. | Yes, and it measured ~2%. |
 | Train-only render cadence capped to **30 Hz** on mobile | Scenario 6: all sustained frames come from this ticker. Halving its rate halves sustained GPU load, battery and heat. | **No** — CI already runs at 3–4 fps, far below the 30 Hz cap, so the cap never engages. Device-only. |
-| `preserveDrawingBuffer` removed | D-015 deleted the last frame-capture helper; the screenshot specs already run without it. It was an extra full-size buffer copy per frame that nothing read. | Yes. |
 | Mobile ward budget 4 → **3**, tile cache 128 MB → **48 MB** | Four 128 MB caches is more memory than a phone gives one tab; the budget bounds how many can exist. | Partly (fewer tiles fetched). |
 | Mobile 3D-Tiles SSE 12 → **16** close in, 32 → **40** mid | Fewer tiles for the same silhouette. Looked at, not just measured: `screenshots/m6-cityview-buildings.png` is CITY VIEW at 390×844 on the mobile profile, and the west-Shinjuku towers still read as separate masses with depth rather than one slab. (That is the synthetic fixture tileset, not live PLATEAU — the container cannot reach MLIT. It answers the geometry question, not the coverage one.) | Yes. |
 | Building diagnostics no longer re-render React on every camera event | The altitude threshold was an absolute 25 m, which is noise at 400 km altitude and fires on nearly every event during a flight. Now relative (8%). | Marginal. |
@@ -161,6 +161,26 @@ is what the second pass does.
 
 Worth stating plainly because the first version of this work would have shipped a
 "disabled antialiasing" line in the changelog while leaving 4× MSAA running.
+
+### One change that was made, measured, and then reverted
+
+`preserveDrawingBuffer` is enabled under `?debug`, and removing it looked free: D-015
+had deleted the pixel-diff helper, so nothing appeared to read the buffer back.
+
+Nothing except `render.spec.ts`, whose `sample()` still copies the canvas with
+`drawImage` to check that the globe is not black — the one failure mode every
+DOM-based test sails straight through. Two render tests went red on the full suite
+run, which is exactly what that test exists to catch.
+
+It is restored. Production never sets `?debug`, so it costs a real user nothing, and
+the belief that it was dead code was simply wrong.
+
+It also put the numbers in doubt, so they were taken again. The first "after" sweep
+ran under `?debug` with the flag off against a baseline that had it on, which is not a
+fair comparison. Re-measured with the flag restored on both sides, the result barely
+moves — CITY VIEW 197.0 → 197.5 ms, 東京広域 153.6 → 151.7 ms. So the flag was never
+where the gain came from; it was the MSAA and FXAA change all along. The table above
+is that re-measurement, and the suspicion is recorded rather than the relief.
 
 ### Deliberately not done
 
