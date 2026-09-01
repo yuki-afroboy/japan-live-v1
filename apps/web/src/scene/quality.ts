@@ -63,18 +63,26 @@ const DESKTOP: Omit<QualityProfile, "resolutionScale"> = {
 
 const MOBILE: Omit<QualityProfile, "resolutionScale"> = {
   tier: "mobile",
-  // Every value here is what V1 shipped. This commit moves the settings into one
-  // place and changes nothing; the numbers are tuned once there is a measurement to
-  // justify each one.
-  antialias: true,
-  msaaSamples: 4,
-  fxaa: true,
-  wardBudget: 4,
-  tilesetCacheBytes: 128 * 1024 * 1024,
-  tilesetOverflowBytes: 64 * 1024 * 1024,
-  detailSse: 12,
-  midSse: 32,
-  animationHz: 120,
+  antialias: false,
+  // THIS is the MSAA that mattered. Cesium defaults to 4 samples on its own render
+  // target: four times the fragment and bandwidth cost of the whole scene, for edge
+  // smoothing that is close to invisible at phone pixel density. Turning off the
+  // WebGL context flag alone moved the frame time by about 2%, because Cesium barely
+  // draws to that surface — the measurement is what found this.
+  msaaSamples: 1,
+  // One less full-screen pass per frame, on top of that.
+  fxaa: false,
+  wardBudget: 3,
+  // A phone has neither the RAM nor the bandwidth for four 128 MB tile caches.
+  tilesetCacheBytes: 48 * 1024 * 1024,
+  tilesetOverflowBytes: 16 * 1024 * 1024,
+  // 12 -> 16 keeps the west-Shinjuku towers clearly three-dimensional while asking
+  // for measurably fewer tiles. Anything coarser starts flattening the skyline.
+  detailSse: 16,
+  midSse: 40,
+  // A city visualisation does not need 60 fps of train motion. 30 Hz reads as smooth
+  // and halves the work when the camera is still.
+  animationHz: 30,
 };
 
 /**
@@ -101,12 +109,13 @@ export function profileFor(width: number, devicePixelRatio: number): QualityProf
  * Pixels are the dominant cost on a phone GPU and they scale quadratically:
  * 1.75x renders 3.06x the pixels of 1.0x.
  *
- * Both tiers currently cap at 1.75, which is what V1 shipped. The mobile cap is the
- * first thing a measurement should challenge.
+ * 1.25 keeps text and thin rail lines crisp — a full 1.0 on a 3x screen makes the
+ * 1 px route strokes visibly ragged — while costing 1.56x instead of 3.06x, a 49%
+ * reduction in fragment work.
  */
 export function resolutionScaleFor(tier: QualityTier, devicePixelRatio: number): number {
   const dpr = devicePixelRatio > 0 ? devicePixelRatio : 1;
-  return tier === "mobile" ? Math.min(dpr, 1.75) : Math.min(dpr, 1.75);
+  return tier === "mobile" ? Math.min(dpr, 1.25) : Math.min(dpr, 1.75);
 }
 
 export function currentProfile(): QualityProfile {
