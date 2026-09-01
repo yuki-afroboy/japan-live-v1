@@ -6,15 +6,60 @@ import type { Speed } from "@japan-live/simulation";
 import { AppStore, type LayerToggles } from "./state/app-store.js";
 import { SceneController } from "./scene/controller.js";
 import { CAMERA_PRESETS, CITY_VIEW } from "./scene/camera.js";
+import { NARROW_MAX_WIDTH, currentProfile } from "./scene/quality.js";
 import { Inspector } from "./ui/Inspector.js";
 import { LayerPanel } from "./ui/LayerPanel.js";
 import { DataStatus } from "./ui/DataStatus.js";
 import { BuildingDiagnosticsPanel } from "./ui/BuildingDiagnostics.js";
+import { PerformancePanel } from "./ui/PerformancePanel.js";
 import { Timeline } from "./ui/Timeline.js";
 import { SearchBox } from "./ui/SearchBox.js";
 import { AttributionBar } from "./ui/Attribution.js";
 
 const store = new AppStore();
+// Fixed at load, exactly like the viewer's own profile: antialias and the WebGL
+// context cannot change without recreating the viewer, so a panel that re-derived
+// this on resize would report settings the renderer is not using.
+const profile = currentProfile();
+
+/**
+ * Which panel the drawer is showing on a phone.
+ *
+ * A phone shows exactly one. PR #4 stacked all of them in a single scroll container
+ * and it still did not work on real iOS Safari — see D-018. Reaching a panel must not
+ * depend on a scroll gesture surviving four layers of CSS.
+ */
+type DrawerTab = "layers" | "buildings" | "data" | "perf";
+
+const DRAWER_TABS: { id: DrawerTab; label: string; hint: string }[] = [
+  { id: "layers", label: "レイヤー", hint: "表示するレイヤー" },
+  // Named for what it shows, not for the data source. "PLATEAU" means nothing to
+  // someone who just wants to know why there are no buildings.
+  { id: "buildings", label: "3D建物", hint: "3D建物の読み込み状況" },
+  { id: "data", label: "データ", hint: "データソースの状態" },
+  { id: "perf", label: "性能", hint: "フレームレート計測" },
+];
+
+/**
+ * True on phone-width screens. Reads the same breakpoint the stylesheet and the
+ * rendering quality tier use, so the layout and the pixel budget can never disagree.
+ */
+function useNarrowViewport(): boolean {
+  const query = `(max-width: ${NARROW_MAX_WIDTH}px)`;
+  const subscribe = useCallback(
+    (cb: () => void) => {
+      const mq = window.matchMedia(query);
+      mq.addEventListener("change", cb);
+      return () => mq.removeEventListener("change", cb);
+    },
+    [query],
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () => window.matchMedia(query).matches,
+    () => false,
+  );
+}
 
 interface Stats {
   fps: number;
@@ -40,6 +85,11 @@ export function App() {
   // On a phone the panels would cover the map, which is the one thing the product is.
   // They collapse behind a toggle there and stay open on desktop.
   const [panelsOpen, setPanelsOpen] = useState(false);
+  const narrow = useNarrowViewport();
+  const [tab, setTab] = useState<DrawerTab>("layers");
+  // Desktop keeps its stack of panels, so PERFORMANCE gets its own disclosure there.
+  const [perfOpen, setPerfOpen] = useState(false);
+  const perfActive = narrow ? panelsOpen && tab === "perf" : perfOpen;
   // The brand block and the timeline are the two largest permanent obstructions on a
   // phone. Both collapse to a single line, and the Inspector collapses them for you.
   const [brandCompact, setBrandCompact] = useState(false);
@@ -275,15 +325,80 @@ export function App() {
           {panelsOpen ? "✕ 閉じる" : "☰ レイヤー / データ"}
         </button>
 
-        <div className="right-stack" data-open={panelsOpen}>
-          <LayerPanel layers={snapshot.layers} health={snapshot.sceneHealth} onToggle={onToggle} />
-          <BuildingDiagnosticsPanel diagnostics={snapshot.buildings} />
-          <DataStatus
-            providers={snapshot.providers}
-            health={snapshot.sceneHealth}
-            dataset={snapshot.dataset}
-            now={uiNow}
-          />
+        <div className="right-stack" data-open={panelsOpen} data-narrow={narrow}>
+          {/*
+            On a phone this is a tab strip, not a scrolling wall. Every panel is two
+            taps away: open the drawer, tap the tab. Desktop has room to stack them and
+            keeps doing so.
+          */}
+          {narrow && (
+            <nav className="drawer-tabs" role="tablist" aria-label="パネル切り替え">
+              {DRAWER_TABS.map((t) => (
+                <button
+                  key={t.id}
+                  role="tab"
+                  id={`tab-${t.id}`}
+                  className="drawer-tab"
+                  aria-selected={tab === t.id}
+                  aria-controls={`panel-${t.id}`}
+                  title={t.hint}
+                  onClick={() => setTab(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </nav>
+          )}
+
+          <div
+            className="drawer-slot"
+            id="panel-layers"
+            role={narrow ? "tabpanel" : undefined}
+            aria-labelledby={narrow ? "tab-layers" : undefined}
+            hidden={narrow && tab !== "layers"}
+          >
+            <LayerPanel layers={snapshot.layers} health={snapshot.sceneHealth} onToggle={onToggle} />
+          </div>
+
+          <div
+            className="drawer-slot"
+            id="panel-buildings"
+            role={narrow ? "tabpanel" : undefined}
+            aria-labelledby={narrow ? "tab-buildings" : undefined}
+            hidden={narrow && tab !== "buildings"}
+          >
+            <BuildingDiagnosticsPanel diagnostics={snapshot.buildings} />
+          </div>
+
+          <div
+            className="drawer-slot"
+            id="panel-data"
+            role={narrow ? "tabpanel" : undefined}
+            aria-labelledby={narrow ? "tab-data" : undefined}
+            hidden={narrow && tab !== "data"}
+          >
+            <DataStatus
+              providers={snapshot.providers}
+              health={snapshot.sceneHealth}
+              dataset={snapshot.dataset}
+              now={uiNow}
+            />
+          </div>
+
+          <div
+            className="drawer-slot"
+            id="panel-perf"
+            role={narrow ? "tabpanel" : undefined}
+            aria-labelledby={narrow ? "tab-perf" : undefined}
+            hidden={narrow && tab !== "perf"}
+          >
+            <PerformancePanel
+              store={store}
+              active={perfActive}
+              profile={profile}
+              onToggle={narrow ? undefined : () => setPerfOpen((v) => !v)}
+            />
+          </div>
         </div>
 
         {selected && (

@@ -132,9 +132,40 @@ button { font: inherit; color: inherit; cursor: pointer; }
   display: flex; flex-direction: column; gap: 10px;
   align-items: flex-end;
   max-height: 100%;
-  overflow: hidden;
+  /* Was `overflow: hidden`, which silently clipped the last panel on a short window.
+     A desktop pointer has a wheel and a visible scrollbar, so this is the one place a
+     scroll container is the right answer rather than the bug (see D-018). */
+  overflow-y: auto;
+  overflow-x: hidden;
+  pointer-events: auto;
 }
-.right-stack > .panel { width: 254px; }
+/* Each panel sits in a slot. On desktop every slot is shown; on a phone the tab strip
+   shows exactly one. The wrapper is what `hidden` toggles, so the panel inside keeps
+   its own styling either way. */
+.right-stack > .drawer-slot { width: 254px; flex: 0 0 auto; }
+.right-stack .panel { width: 100%; }
+/* A UA `display: none` for [hidden] loses to any display we set. Say it explicitly. */
+.drawer-slot[hidden] { display: none !important; }
+
+/* ---------- Drawer tabs (phone only) ---------- */
+.drawer-tabs { display: none; }
+.drawer-tab {
+  flex: 1 1 0; min-width: 0;
+  padding: 9px 4px;
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+  background: transparent; border: none; border-radius: 6px;
+  color: var(--text-dim);
+}
+.drawer-tab[aria-selected="true"] {
+  background: rgba(78, 168, 255, 0.16);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(78, 168, 255, 0.4);
+}
+
+.perf-divider {
+  height: 1px; margin: 8px 0 6px;
+  background: var(--panel-border);
+}
 
 .panel-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -411,14 +442,49 @@ button { font: inherit; color: inherit; cursor: pointer; }
     margin-top: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    /* Room for the collapsed brand block above and the timeline below. */
+    /* Room for the collapsed brand block above and the timeline below.
+       dvh, not vh: iOS Safari resolves 100vh against the LARGE viewport, as if the
+       URL bar were hidden, so a vh-sized box hangs ~90px below what you can see. */
     max-height: calc(100vh - 210px);
+    max-height: calc(100dvh - 210px);
     overscroll-behavior: contain;
+    gap: 8px;
   }
   .right-stack[data-open="false"] { display: none; }
-  .right-stack > .panel { width: 100%; flex: 0 0 auto; }
+  /*
+   * THE DRAWER MUST TAKE TOUCHES ITSELF.
+   *
+   * `.hud > *` sets pointer-events: none on every grid cell so empty strips do not
+   * steal map drags, and only .panel/button/input get it back. That left the drawer —
+   * the scroll container — untouchable: iOS Safari hit-tests a pan to the innermost
+   * element that accepts pointer events, found a .panel that no longer scrolled
+   * (PR #4 removed the inner scrollers), and gave the gesture to the map. The panels
+   * behind LAYERS were unreachable by finger while being perfectly scrollable by a
+   * synthetic wheel event, which is why the E2E passed. See D-018.
+   *
+   * Only when open, and only here: on desktop this cell is a narrow column whose empty
+   * space must keep falling through to the globe.
+   */
+  .right-stack[data-open="true"] { pointer-events: auto; }
+  .right-stack > .drawer-slot { width: 100%; }
 
-  /* No inner scrollers: the drawer above is the single scroll container. */
+  /* The tab strip stays put while the panel under it scrolls. */
+  .drawer-tabs {
+    display: flex; gap: 3px;
+    position: sticky; top: 0; z-index: 2;
+    padding: 4px;
+    border-radius: var(--radius);
+    background: var(--panel);
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    border: 1px solid var(--panel-border);
+    pointer-events: auto;
+    flex: 0 0 auto;
+  }
+  .drawer-tab { padding: 10px 4px; font-size: 12px; }
+
+  /* One panel at a time, so a body rarely needs to scroll at all — and when it does,
+     the drawer is the only scroller. */
   .right-stack .panel-body {
     max-height: none;
     overflow: visible;
@@ -484,6 +550,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 /* ---------- Building diagnostics ---------- */
 .diag { display: grid; grid-template-columns: 78px 1fr; gap: 2px 8px; margin: 0; font-size: 11px; }
+/* Performance labels are longer than the building ones and wrap in a 78px column. */
+.diag.diag-wide { grid-template-columns: 104px 1fr; }
 .diag dt { color: var(--text-faint); font-size: 10px; }
 .diag dd { margin: 0; font-variant-numeric: tabular-nums; }
 .diag-good { color: var(--live); }
