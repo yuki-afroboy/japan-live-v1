@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { blockPlateau } from "./helpers.js";
 
 /**
  * Map-first on a phone (spec §19).
@@ -9,6 +10,9 @@ import { expect, test } from "@playwright/test";
  */
 
 test.use({ viewport: { width: 414, height: 896 } });
+
+// Layout, not buildings. See e2e/helpers.ts for why real PLATEAU tiles are kept out.
+test.beforeEach(async ({ page }) => blockPlateau(page));
 
 test("the map, not the panels, owns a phone screen", async ({ page }) => {
   await page.goto("/");

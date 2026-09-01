@@ -1,5 +1,6 @@
 import { test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import { serveTestTileset } from "./helpers.js";
 
 /**
  * Visual verification (spec §65). These are not assertions — they exist so a human,
@@ -18,6 +19,7 @@ test.skip(!process.env.CAPTURE, "set CAPTURE=1 to regenerate screenshots");
 test.beforeAll(() => mkdirSync(OUT, { recursive: true }));
 
 async function boot(page: Page) {
+  await serveTestTileset(page);
   await page.goto("/?debug=1");
   await page.waitForSelector(".cesium-widget canvas", { timeout: 45_000 });
   await page.waitForTimeout(6_000);

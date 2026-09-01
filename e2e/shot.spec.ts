@@ -1,19 +1,13 @@
 import { test } from "@playwright/test";
-import { readFileSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-const HERE = dirname(fileURLToPath(import.meta.url));
-const TILESET = JSON.parse(readFileSync(resolve(HERE, "fixtures/tileset/tileset.json"), "utf8"));
-const GLB = readFileSync(resolve(HERE, "fixtures/tileset/buildings.glb"));
+import { mkdirSync } from "node:fs";
+import { serveTestTileset } from "./helpers.js";
+
 test.setTimeout(200000);
+test.skip(!process.env.CAPTURE, "set CAPTURE=1 to regenerate screenshots");
+
 test("shot", async ({ page }) => {
   mkdirSync("screenshots", { recursive: true });
-  await page.route("**/datacatalog/3dtiles/**", async (r) => {
-    const u = r.request().url();
-    if (u.endsWith(".glb")) return r.fulfill({ status: 200, contentType: "model/gltf-binary", body: GLB });
-    return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TILESET) });
-  });
-  await page.route("**/*.glb", (r) => r.fulfill({ status: 200, contentType: "model/gltf-binary", body: GLB }));
+  await serveTestTileset(page);
   await page.setViewportSize({ width: 1500, height: 900 });
   await page.goto("/?debug=1");
   await page.waitForSelector(".cesium-widget canvas", { timeout: 45000 });

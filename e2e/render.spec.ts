@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { blockPlateau, captureFrame, frameDiffRatio } from "./helpers.js";
 
 /**
  * Does the scene actually DRAW anything?
@@ -8,7 +9,15 @@ import { expect, test } from "@playwright/test";
  * invisible" is a failure mode that looks identical to success from the DOM.
  *
  * `?debug=1` turns on preserveDrawingBuffer so the pixels can be read back.
+ *
+ * These are the slowest tests in the suite and the deadline is sized for that. The
+ * reason is structural, not a bug being papered over: JAPAN LIVE drives a continuous
+ * render loop while trains are moving (that IS the product), and on CI's software
+ * rasteriser the main thread never goes idle, so every Playwright action competes with
+ * a fully loaded event loop. The separate problem that actually broke CI — non-building
+ * tests downloading real PLATEAU tiles — is fixed in `blockPlateau`, not here.
  */
+test.setTimeout(150_000);
 
 interface Coverage {
   lit: number;
@@ -44,6 +53,10 @@ async function sample(page: import("@playwright/test").Page): Promise<Coverage> 
 }
 
 async function boot(page: import("@playwright/test").Page) {
+  // This file is about rail, trains and X-Ray. Letting it fetch real PLATEAU tiles
+  // saturated the software rasteriser in CI until clicks could not settle and the
+  // suite timed out; buildings have their own file.
+  await blockPlateau(page);
   await page.goto("/?debug=1");
   await page.waitForSelector(".cesium-widget canvas", { timeout: 45_000 });
   await page.waitForTimeout(6_000);
@@ -84,19 +97,21 @@ test("the scene gains detail as the camera descends", async ({ page }) => {
 test("the rail network is drawn over Tokyo", async ({ page }) => {
   await boot(page);
   await page.getByRole("button", { name: "新宿", exact: true }).click();
-  await page.waitForTimeout(9_000);
+  await page.waitForTimeout(7_000);
 
-  const withRail = await sample(page);
+  await captureFrame(page, "rail-on");
 
   await page.getByRole("button", { name: "鉄道路線 Railways" }).click();
   await page.getByRole("button", { name: "駅 Stations" }).click();
   await page.getByRole("button", { name: "列車 Trains" }).click();
-  await page.waitForTimeout(3_000);
-  const without = await sample(page);
+  await page.waitForTimeout(2_500);
+  await captureFrame(page, "rail-off");
 
-  // Turning the rail layers off must visibly change the frame; if it does not,
-  // they were never being drawn.
-  expect(withRail.distinctColors).toBeGreaterThan(without.distinctColors);
+  // Turning the rail layers off must visibly change the frame; if it does not, they
+  // were never being drawn. Measured as a pixel DIFFERENCE, not a colour count:
+  // removing detail can raise or lower a palette size, so a count is not directional.
+  const diff = await frameDiffRatio(page, "rail-on", "rail-off");
+  expect(diff, "turning rail layers off changed almost nothing").toBeGreaterThan(0.01);
 });
 
 test("trains are drawn at the Kanto scale, not only close in", async ({ page }) => {
@@ -114,11 +129,12 @@ test("X-Ray visibly changes the scene", async ({ page }) => {
   await boot(page);
   await page.getByRole("button", { name: "新宿", exact: true }).click();
   await page.waitForTimeout(8_000);
-  const before = await sample(page);
+  await captureFrame(page, "xray-off");
 
   await page.getByRole("button", { name: "地下鉄 X-RAY" }).click();
   await page.waitForTimeout(4_000);
-  const after = await sample(page);
+  await captureFrame(page, "xray-on");
 
-  expect(Math.abs(after.lit - before.lit) + Math.abs(after.distinctColors - before.distinctColors)).toBeGreaterThan(0);
+  const diff = await frameDiffRatio(page, "xray-off", "xray-on");
+  expect(diff, "X-Ray did not change what is drawn").toBeGreaterThan(0.005);
 });

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { blockPlateau } from "./helpers.js";
 
 /**
  * These run against the production build in a headless browser with software WebGL.
@@ -15,6 +16,10 @@ async function waitForScene(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
+  // Buildings are covered by e2e/buildings.spec.ts against a local fixture. Fetching
+  // real PLATEAU tiles here only loads the software rasteriser until clicks stop
+  // settling; see e2e/helpers.ts.
+  await blockPlateau(page);
   page.on("pageerror", (err) => {
     throw new Error(`uncaught page error: ${err.message}`);
   });
