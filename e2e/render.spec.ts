@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { blockPlateau, captureFrame, frameDiffRatio } from "./helpers.js";
+import {
+  blockPlateau,
+  captureFrame,
+  frameDiffRatio,
+  measureDrift,
+  readXrayState,
+} from "./helpers.js";
 
 /**
  * Does the scene actually DRAW anything?
@@ -99,19 +105,24 @@ test("the rail network is drawn over Tokyo", async ({ page }) => {
   await page.getByRole("button", { name: "新宿", exact: true }).click();
   await page.waitForTimeout(7_000);
 
-  await captureFrame(page, "rail-on");
+  // How much does the frame change on its own? Trains never stop moving — that is the
+  // product — so this is the floor any layer change has to clear. Without the control,
+  // `diff > 0.01` passes on animation alone and proves nothing about the rail layers.
+  const drift = await measureDrift(page, 2_500);
 
+  await captureFrame(page, "rail-on");
   await page.getByRole("button", { name: "鉄道路線 Railways" }).click();
   await page.getByRole("button", { name: "駅 Stations" }).click();
   await page.getByRole("button", { name: "列車 Trains" }).click();
   await page.waitForTimeout(2_500);
   await captureFrame(page, "rail-off");
 
-  // Turning the rail layers off must visibly change the frame; if it does not, they
-  // were never being drawn. Measured as a pixel DIFFERENCE, not a colour count:
-  // removing detail can raise or lower a palette size, so a count is not directional.
-  const diff = await frameDiffRatio(page, "rail-on", "rail-off");
-  expect(diff, "turning rail layers off changed almost nothing").toBeGreaterThan(0.01);
+  const change = await frameDiffRatio(page, "rail-on", "rail-off");
+  expect(
+    change,
+    `removing rail, stations and trains changed the frame no more than motion alone ` +
+      `(change ${change.toFixed(3)} vs drift ${drift.toFixed(3)})`,
+  ).toBeGreaterThan(drift * 1.5);
 });
 
 test("trains are drawn at the Kanto scale, not only close in", async ({ page }) => {
@@ -125,16 +136,32 @@ test("trains are drawn at the Kanto scale, not only close in", async ({ page }) 
   expect(stats).not.toContain("aggregate");
 });
 
-test("X-Ray visibly changes the scene", async ({ page }) => {
+test("X-Ray changes the scene, and changes the state it is supposed to", async ({ page }) => {
   await boot(page);
   await page.getByRole("button", { name: "新宿", exact: true }).click();
-  await page.waitForTimeout(8_000);
+  await page.waitForTimeout(7_000);
+
+  // X-Ray makes the globe translucent so the underground network reads through it.
+  // Asserting that directly is deterministic; asserting on pixels alone is not,
+  // because trains move whether or not X-Ray does anything.
+  const before = await readXrayState(page);
+  expect(before.translucencyEnabled).toBe(false);
+
+  const drift = await measureDrift(page, 2_500);
   await captureFrame(page, "xray-off");
 
   await page.getByRole("button", { name: "地下鉄 X-RAY" }).click();
-  await page.waitForTimeout(4_000);
+  await page.waitForTimeout(2_500);
   await captureFrame(page, "xray-on");
 
-  const diff = await frameDiffRatio(page, "xray-off", "xray-on");
-  expect(diff, "X-Ray did not change what is drawn").toBeGreaterThan(0.005);
+  const after = await readXrayState(page);
+  expect(after.translucencyEnabled).toBe(true);
+  expect(after.frontFaceAlpha).toBeLessThan(before.frontFaceAlpha);
+
+  const change = await frameDiffRatio(page, "xray-off", "xray-on");
+  expect(
+    change,
+    `X-Ray changed the frame no more than motion alone ` +
+      `(change ${change.toFixed(3)} vs drift ${drift.toFixed(3)})`,
+  ).toBeGreaterThan(drift * 1.2);
 });

@@ -121,9 +121,13 @@ export async function captureFrame(page: Page, slot: string): Promise<FrameStats
 /**
  * Fraction of pixels that differ meaningfully between two captured frames.
  *
- * Direction-agnostic on purpose. Counting distinct colours is not: a large flat-shaded
- * mass can REDUCE the palette by occluding a more varied background, which is exactly
- * how a working skyline failed an "it must add colours" assertion.
+ * IMPORTANT: never assert on this alone. JAPAN LIVE animates trains continuously — that
+ * is the product — so two frames a few seconds apart differ by roughly 20% with nothing
+ * toggled at all. A bare `diff > 0.01` therefore passes whether or not the feature under
+ * test works, and a bare `diff < 0.02` fails even when it does.
+ *
+ * Use it only against a same-interval motion baseline from `measureDrift`, or prefer
+ * `probeGeometry` / direct scene state, which do not move on their own.
  */
 export async function frameDiffRatio(page: Page, a: string, b: string): Promise<number> {
   return page.evaluate(
@@ -151,7 +155,11 @@ export interface GeometryProbe {
   /** Screen samples that landed on 3D Tiles geometry. */
   tileHits: number;
   samples: number;
-  /** Highest surface height found, in metres above the ellipsoid. */
+  /**
+   * Highest ROOFTOP height found, in metres above the ellipsoid — measured only where
+   * a sample actually hit tile geometry. Zero when nothing was hit, which is the
+   * honest answer: with no buildings there are no rooftops to measure.
+   */
   maxHeight: number;
   pickPositionSupported: boolean;
 }
@@ -175,13 +183,20 @@ export async function probeGeometry(page: Page): Promise<GeometryProbe> {
 
     let tileHits = 0;
     let samples = 0;
-    let maxHeight = -Infinity;
+    let maxHeight = 0;
 
-    // A grid across the middle of the frame, avoiding the HUD at the edges.
-    for (let ix = 2; ix <= 8; ix++) {
-      for (let iy = 2; iy <= 8; iy++) {
-        const x = (canvas.clientWidth * ix) / 10;
-        const y = (canvas.clientHeight * iy) / 10;
+    // A 5x5 grid across the middle of the frame, avoiding the HUD at the edges.
+    //
+    // Every pick re-renders the scene into a pick buffer, which on CI's software
+    // rasteriser costs real time with 350+ trains and ten tilesets loaded. A 7x7 grid
+    // that also called pickPosition at every point meant ~100 render passes per probe
+    // and blew the test deadline. So: pick on a smaller grid, and measure height ONLY
+    // where geometry was actually hit — which is also the more precise question, since
+    // what matters is how high the rooftops are, not how high the ground is.
+    for (let ix = 1; ix <= 5; ix++) {
+      for (let iy = 1; iy <= 5; iy++) {
+        const x = (canvas.clientWidth * ix) / 6;
+        const y = (canvas.clientHeight * iy) / 6;
         const position = new Cesium.Cartesian2(x, y);
         samples++;
 
@@ -190,8 +205,9 @@ export async function probeGeometry(page: Page): Promise<GeometryProbe> {
         const isTileset =
           (primitive && "maximumScreenSpaceError" in primitive) ||
           (picked && typeof picked.getProperty === "function");
-        if (isTileset) tileHits++;
+        if (!isTileset) continue;
 
+        tileHits++;
         if (scene.pickPositionSupported) {
           const cartesian = scene.pickPosition(position);
           if (Cesium.defined(cartesian)) {
@@ -205,8 +221,39 @@ export async function probeGeometry(page: Page): Promise<GeometryProbe> {
     return {
       tileHits,
       samples,
-      maxHeight: Number.isFinite(maxHeight) ? maxHeight : 0,
+      maxHeight,
       pickPositionSupported: Boolean(scene.pickPositionSupported),
+    };
+  });
+}
+
+/**
+ * How much the frame changes on its own over `intervalMs`, with nothing toggled.
+ *
+ * This is the control for any pixel comparison: trains keep moving, so the question is
+ * never "did the frame change" but "did it change more than it would have anyway".
+ */
+export async function measureDrift(page: Page, intervalMs: number): Promise<number> {
+  await captureFrame(page, "__drift_a");
+  await page.waitForTimeout(intervalMs);
+  await captureFrame(page, "__drift_b");
+  return frameDiffRatio(page, "__drift_a", "__drift_b");
+}
+
+/** Click a layer toggle in the Layers panel by its accessible name. */
+export async function toggleLayer(page: Page, label: string): Promise<void> {
+  await page.getByRole("button", { name: label }).click();
+}
+
+/** Read the scene state that X-Ray actually manipulates. Deterministic, unlike pixels. */
+export async function readXrayState(
+  page: Page,
+): Promise<{ translucencyEnabled: boolean; frontFaceAlpha: number }> {
+  return page.evaluate(() => {
+    const globe = (window as any).__viewer.scene.globe;
+    return {
+      translucencyEnabled: Boolean(globe.translucency.enabled),
+      frontFaceAlpha: Number(globe.translucency.frontFaceAlpha),
     };
   });
 }

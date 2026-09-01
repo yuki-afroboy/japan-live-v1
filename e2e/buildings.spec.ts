@@ -1,10 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import {
-  captureFrame,
-  frameDiffRatio,
-  probeGeometry,
-  serveTestTileset,
-} from "./helpers.js";
+import { probeGeometry, serveTestTileset, toggleLayer } from "./helpers.js";
 
 /**
  * PLATEAU buildings, verified as GEOMETRY — not as "a tileset object was added".
@@ -59,7 +54,7 @@ test("CITY VIEW puts real 3D geometry on screen", async ({ page }) => {
 
   // 1. Geometry is genuinely under the pixels, not merely loaded into a collection.
   const probe = await probeGeometry(page);
-  expect(probe.samples).toBeGreaterThan(20);
+  expect(probe.samples).toBe(25);
   expect(probe.tileHits, "no 3D Tiles geometry was picked anywhere in the view").toBeGreaterThan(3);
 
   // 2. That geometry stands well above ground. This is what makes it a skyline rather
@@ -68,23 +63,23 @@ test("CITY VIEW puts real 3D geometry on screen", async ({ page }) => {
     expect(probe.maxHeight, "surfaces are all at ground level; buildings have no height").toBeGreaterThan(30);
   }
 
-  // 3. Turning buildings off visibly changes the frame.
+  // 3. The geometry belongs to the Buildings layer: switching it off makes it
+  //    unpickable, and switching it back on brings it back.
   //
-  //    Measured as a pixel DIFFERENCE, deliberately. The previous version asserted that
-  //    buildings must ADD distinct colours, which is not true: a large flat-shaded mass
-  //    occludes a more varied background and can reduce the palette. CI measured 1405
-  //    colours with buildings against 1480 without, and failed a working skyline.
-  await captureFrame(page, "buildings-on");
-  await page.getByRole("button", { name: "3D建物 Buildings" }).click();
+  //    This replaced a full-frame pixel-difference assertion, which was worthless
+  //    here. Trains animate continuously, so any two frames seconds apart differ by
+  //    roughly 20% on their own — `diff > 0.02` passed whether or not buildings
+  //    rendered at all. See docs/DECISIONS.md D-015.
+  await toggleLayer(page, "3D建物 Buildings");
+  await page.waitForTimeout(2_500);
+  const off = await probeGeometry(page);
+  expect(off.tileHits, "buildings were still pickable after being switched off").toBe(0);
+
+  await toggleLayer(page, "3D建物 Buildings");
   await page.waitForTimeout(3_500);
-  await captureFrame(page, "buildings-off");
-
-  const diff = await frameDiffRatio(page, "buildings-on", "buildings-off");
-  expect(diff, "toggling buildings changed almost nothing on screen").toBeGreaterThan(0.02);
-
-  // 4. With buildings off, nothing 3D remains to pick.
-  const offProbe = await probeGeometry(page);
-  expect(offProbe.tileHits).toBe(0);
+  const back = await probeGeometry(page);
+  expect(back.tileHits, "buildings did not return after being switched on").toBeGreaterThan(3);
+  if (back.pickPositionSupported) expect(back.maxHeight).toBeGreaterThan(30);
 });
 
 test("the camera is oblique enough to read a skyline", async ({ page }) => {

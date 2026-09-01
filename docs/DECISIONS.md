@@ -248,3 +248,20 @@ The same change applies to the rail and X-Ray tests, which had the same flaw.
 and requires zero hits, no height, and no frame change. An assertion that passes whether
 or not the feature works is worse than no assertion, and this is the second time in this
 project that a green test hid a blank screen.
+
+---
+
+### D-016 — A layer's status reports data availability, never user preference
+
+**Context.** `BuildingLayer.status` returned `"unavailable"` whenever the layer was
+switched off. `LayerPanel` disables a control whose layer is unavailable. So turning 3D
+buildings off disabled the buildings toggle: they could be switched off exactly once and
+never back on.
+
+**Decision.** Layer status describes whether the data *can* be shown — manifest missing,
+tilesets failed — and never whether the user currently *wants* it shown. Only the former
+may disable a control.
+
+**Found by:** the geometry probe added in D-015, whose second toggle click hung until the
+test deadline. The three "timeouts" that followed were this one bug, not slow rendering;
+raising the deadline would have hidden a real defect behind a plausible excuse.

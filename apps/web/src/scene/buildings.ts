@@ -343,10 +343,20 @@ export class BuildingLayer {
     return this.manifest?.meta.attribution;
   }
 
+  /**
+   * Availability of the layer's DATA — deliberately not whether the user has it on.
+   *
+   * Reporting "unavailable" for a layer the user simply switched off made LayerPanel
+   * disable that layer's own toggle, so turning 3D buildings off left no way to turn
+   * them back on. "I don't want to see this" and "this cannot be shown" are different
+   * facts and only the second one may disable a control.
+   */
   get status(): LayerStatus {
-    if (!this.enabled) return "unavailable";
     if (this.manifestError) return "unavailable";
-    return this.loaded.size > 0 ? "ok" : "loading";
+    if (!this.manifest) return "loading";
+    if (this.loaded.size > 0) return "ok";
+    // Nothing loaded yet: still working on it if the layer is on, otherwise simply idle.
+    return this.enabled ? "loading" : "ok";
   }
 
   destroy(): void {

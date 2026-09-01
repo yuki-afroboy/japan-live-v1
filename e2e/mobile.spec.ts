@@ -101,3 +101,24 @@ test("the honesty badge and timeline stay visible without opening anything", asy
   await expect(page.locator(".timeline")).toBeVisible();
   await expect(page.locator(".attribution")).toBeVisible();
 });
+
+test("switching a layer off does not disable its own toggle", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForSelector(".cesium-widget canvas", { timeout: 45_000 });
+  await page.waitForTimeout(5_000);
+  await page.locator(".panels-toggle").click();
+
+  // Regression: BuildingLayer.status reported "unavailable" whenever the user turned
+  // the layer off, which made LayerPanel disable that very switch. Buildings could be
+  // turned off exactly once and never back on.
+  const buildings = page.getByRole("button", { name: "3D建物 Buildings" });
+  await expect(buildings).toBeEnabled();
+
+  await buildings.click();
+  await expect(buildings).toHaveAttribute("aria-pressed", "false");
+  await expect(buildings, "the toggle disabled itself when switched off").toBeEnabled();
+
+  await buildings.click();
+  await expect(buildings).toHaveAttribute("aria-pressed", "true");
+  await expect(buildings).toBeEnabled();
+});

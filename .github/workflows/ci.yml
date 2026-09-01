@@ -1,9 +1,19 @@
 name: CI
 
+# A branch push and its pull_request are the same commit, so `branches: ["**"]` ran
+# the whole suite twice, three seconds apart — 40 minutes of runner time per push for
+# 20 minutes of signal. Branches are covered by the PR event; `push` is kept only for
+# main, which has no PR of its own.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+
+# Superseding pushes cancel the run they replace, instead of leaving a 20-minute E2E
+# job grinding on a commit nobody is waiting for.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
