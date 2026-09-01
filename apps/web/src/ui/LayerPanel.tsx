@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { LayerToggles } from "../state/app-store.js";
 import type { SceneHealth } from "../scene/viewer.js";
 
@@ -26,6 +27,11 @@ const ROWS: RowSpec[] = [
 const FUTURE = ["バス Bus", "飛行機 Flight", "船 Ferry", "天気 Weather", "交通量 Traffic", "人流 People"];
 
 export function LayerPanel({ layers, health, onToggle }: Props) {
+  // Collapsed by default. Six controls that do nothing in V1 were taking up roughly
+  // half the panel's height, pushing the PLATEAU diagnostics — the thing someone is
+  // actually looking for when buildings are missing — below the fold on a phone.
+  const [futureOpen, setFutureOpen] = useState(false);
+
   return (
     <section className="panel" aria-label="レイヤー">
       <div className="panel-head">
@@ -63,13 +69,20 @@ export function LayerPanel({ layers, health, onToggle }: Props) {
         )}
 
         <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--panel-border)" }}>
-          <div className="hint" style={{ marginBottom: 4 }}>V2以降で追加予定</div>
-          {FUTURE.map((f) => (
-            <div key={f} className="toggle-row disabled">
-              <div>{f}</div>
-              <button className="switch" data-on={false} disabled aria-label={f} />
-            </div>
-          ))}
+          <button
+            className="diag-toggle"
+            onClick={() => setFutureOpen((v) => !v)}
+            aria-expanded={futureOpen}
+          >
+            {futureOpen ? "▾" : "▸"} V2以降で追加予定（{FUTURE.length}件）
+          </button>
+          {futureOpen &&
+            FUTURE.map((f) => (
+              <div key={f} className="toggle-row disabled">
+                <div>{f}</div>
+                <button className="switch" data-on={false} disabled aria-label={f} />
+              </div>
+            ))}
         </div>
       </div>
     </section>

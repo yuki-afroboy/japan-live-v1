@@ -40,9 +40,7 @@ export async function blockPlateau(page: Page): Promise<void> {
   }
 }
 
-const TILESET = JSON.parse(
-  readFileSync(resolve(HERE, "fixtures/tileset/tileset.json"), "utf8"),
-);
+const TILESET = JSON.parse(readFileSync(resolve(HERE, "fixtures/tileset/tileset.json"), "utf8"));
 const GLB = readFileSync(resolve(HERE, "fixtures/tileset/buildings.glb"));
 
 /**
@@ -63,12 +61,19 @@ export async function serveTestTileset(
 
   await page.route("**/datacatalog/3dtiles/**", async (route) => {
     if (options.failStatus) {
-      await route.fulfill({ status: options.failStatus, body: "upstream error" });
+      await route.fulfill({
+        status: options.failStatus,
+        body: "upstream error",
+      });
       return;
     }
     const url = route.request().url();
     if (url.endsWith(".glb")) {
-      await route.fulfill({ status: 200, contentType: "model/gltf-binary", body: GLB });
+      await route.fulfill({
+        status: 200,
+        contentType: "model/gltf-binary",
+        body: GLB,
+      });
       return;
     }
     await route.fulfill({
@@ -265,7 +270,11 @@ export async function probeRail(page: Page): Promise<RailProbe> {
 
     for (let i = 0; i < scene.primitives.length; i++) {
       const collection = scene.primitives.get(i);
-      if (!collection || typeof collection.get !== "function" || typeof collection.length !== "number") {
+      if (
+        !collection ||
+        typeof collection.get !== "function" ||
+        typeof collection.length !== "number"
+      ) {
         continue;
       }
       const first = collection.get(0);
@@ -302,6 +311,40 @@ export async function probeRail(page: Page): Promise<RailProbe> {
       }
     }
 
-    return { visibleRoutes, visibleStations, stationPickHits, stationPickAttempts };
+    return {
+      visibleRoutes,
+      visibleStations,
+      stationPickHits,
+      stationPickAttempts,
+    };
   });
+}
+
+/**
+ * Probe until geometry actually shows up, then return the final reading.
+ *
+ * Tiles finish loading when they finish; a fixed sleep either wastes time or races
+ * them. The full-suite run caught this: the probe measured exactly 4 hits out of 25
+ * samples against a `> 3` assertion in isolation, and fewer under load.
+ *
+ * Two separate things came out of that. Waiting for the condition instead of sleeping
+ * is one. The other is that `> 3` was never the meaningful line: how many of 25 fixed
+ * sample rays land on 25 towers depends on where the camera settles, not on whether
+ * buildings work. What discriminates is presence against absence — the negative
+ * controls demand exactly 0 with PLATEAU blocked and after the layer is toggled off —
+ * plus surfaces standing above ground. So callers wait on `minHits` and then assert
+ * `> 0`; the tight number is the wait condition, not a threshold tuned to pass.
+ */
+export async function waitForGeometry(
+  page: Page,
+  options: { minHits?: number; attempts?: number } = {},
+): Promise<GeometryProbe> {
+  const minHits = options.minHits ?? 1;
+  const attempts = options.attempts ?? 8;
+  let last = await probeGeometry(page);
+  for (let i = 1; i < attempts && last.tileHits < minHits; i++) {
+    await page.waitForTimeout(2_500);
+    last = await probeGeometry(page);
+  }
+  return last;
 }

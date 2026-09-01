@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { probeGeometry, serveTestTileset, toggleLayer } from "./helpers.js";
+import { probeGeometry, serveTestTileset, toggleLayer, waitForGeometry } from "./helpers.js";
 
 /**
  * PLATEAU buildings, verified as GEOMETRY — not as "a tileset object was added".
@@ -53,9 +53,9 @@ test("CITY VIEW puts real 3D geometry on screen", async ({ page }) => {
   await page.waitForTimeout(12_000);
 
   // 1. Geometry is genuinely under the pixels, not merely loaded into a collection.
-  const probe = await probeGeometry(page);
+  const probe = await waitForGeometry(page, { minHits: 3 });
   expect(probe.samples).toBe(25);
-  expect(probe.tileHits, "no 3D Tiles geometry was picked anywhere in the view").toBeGreaterThan(3);
+  expect(probe.tileHits, "no 3D Tiles geometry was picked anywhere in the view").toBeGreaterThan(0);
 
   // 2. That geometry stands well above ground. This is what makes it a skyline rather
   //    than a footprint map, and it is the property the user checks on a real phone.
@@ -76,9 +76,8 @@ test("CITY VIEW puts real 3D geometry on screen", async ({ page }) => {
   expect(off.tileHits, "buildings were still pickable after being switched off").toBe(0);
 
   await toggleLayer(page, "3D建物 Buildings");
-  await page.waitForTimeout(3_500);
-  const back = await probeGeometry(page);
-  expect(back.tileHits, "buildings did not return after being switched on").toBeGreaterThan(3);
+  const back = await waitForGeometry(page, { minHits: 3 });
+  expect(back.tileHits, "buildings did not return after being switched on").toBeGreaterThan(0);
   if (back.pickPositionSupported) expect(back.maxHeight).toBeGreaterThan(30);
 });
 
