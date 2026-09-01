@@ -11,6 +11,10 @@ const OUT = "screenshots";
 
 // Capturing the whole experience involves many camera flights and tile settles.
 test.setTimeout(300_000);
+
+// These produce images for a human to look at; they assert nothing. CI runs the
+// smoke, render, live-path and mobile suites instead. Run with CAPTURE=1.
+test.skip(!process.env.CAPTURE, "set CAPTURE=1 to regenerate screenshots");
 test.beforeAll(() => mkdirSync(OUT, { recursive: true }));
 
 async function boot(page: Page) {
@@ -84,22 +88,39 @@ test("capture the inspector by clicking a train", async ({ page }) => {
   await page.getByRole("button", { name: "東京駅", exact: true }).click();
   await settle(page, 9_000);
 
-  // Trains are primitives, so find one by probing the canvas rather than by selector.
+  // Trains are primitives, not DOM nodes, so ask the scene where one is on screen and
+  // click there rather than probing the canvas blindly.
   const canvas = page.locator(".cesium-widget canvas");
   const box = (await canvas.boundingBox())!;
   let found = false;
 
-  for (let ring = 0; ring < 14 && !found; ring++) {
-    const r = 28 + ring * 26;
-    for (let a = 0; a < 12 && !found; a++) {
-      const angle = (a / 12) * Math.PI * 2;
-      await page.mouse.click(
-        box.x + box.width / 2 + Math.cos(angle) * r,
-        box.y + box.height / 2 + Math.sin(angle) * r,
-      );
-      await page.waitForTimeout(90);
-      found = (await page.locator(".inspector").count()) > 0;
-    }
+  for (let attempt = 0; attempt < 25 && !found; attempt++) {
+    const point = await page.evaluate((index) => {
+      const v = (window as unknown as { __viewer?: any }).__viewer;
+      if (!v) return null;
+      const Cesium = (window as any).Cesium;
+      const collections = [];
+      for (let i = 0; i < v.scene.primitives.length; i++) {
+        const p = v.scene.primitives.get(i);
+        if (p && typeof p.length === "number" && typeof p.get === "function") collections.push(p);
+      }
+      for (const c of collections) {
+        for (let i = index; i < c.length; i++) {
+          const item = c.get(i);
+          if (!item?.show || !item.position) continue;
+          const win = Cesium
+            ? Cesium.SceneTransforms.worldToWindowCoordinates(v.scene, item.position)
+            : v.scene.cartesianToCanvasCoordinates(item.position);
+          if (win && win.x > 40 && win.y > 40) return { x: win.x, y: win.y };
+        }
+      }
+      return null;
+    }, attempt);
+
+    if (!point) break;
+    await page.mouse.click(box.x + point.x, box.y + point.y);
+    await page.waitForTimeout(220);
+    found = (await page.locator(".inspector").count()) > 0;
   }
 
   if (found) {

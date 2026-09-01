@@ -110,7 +110,9 @@ export class SceneController {
     });
 
     if (new URLSearchParams(location.search).has("debug")) {
-      (window as unknown as { __viewer?: Cesium.Viewer }).__viewer = this.viewer;
+      const w = window as unknown as { __viewer?: Cesium.Viewer; Cesium?: typeof Cesium };
+      w.__viewer = this.viewer;
+      w.Cesium = Cesium;
     }
   }
 
