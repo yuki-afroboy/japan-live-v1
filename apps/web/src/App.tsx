@@ -5,10 +5,11 @@ import type { SearchResult } from "@japan-live/transit";
 import type { Speed } from "@japan-live/simulation";
 import { AppStore, type LayerToggles } from "./state/app-store.js";
 import { SceneController } from "./scene/controller.js";
-import { CAMERA_PRESETS } from "./scene/camera.js";
+import { CAMERA_PRESETS, CITY_VIEW } from "./scene/camera.js";
 import { Inspector } from "./ui/Inspector.js";
 import { LayerPanel } from "./ui/LayerPanel.js";
 import { DataStatus } from "./ui/DataStatus.js";
+import { BuildingDiagnosticsPanel } from "./ui/BuildingDiagnostics.js";
 import { Timeline } from "./ui/Timeline.js";
 import { SearchBox } from "./ui/SearchBox.js";
 import { AttributionBar } from "./ui/Attribution.js";
@@ -39,6 +40,10 @@ export function App() {
   // On a phone the panels would cover the map, which is the one thing the product is.
   // They collapse behind a toggle there and stay open on desktop.
   const [panelsOpen, setPanelsOpen] = useState(false);
+  // The brand block and the timeline are the two largest permanent obstructions on a
+  // phone. Both collapse to a single line, and the Inspector collapses them for you.
+  const [brandCompact, setBrandCompact] = useState(false);
+  const [timelineCompact, setTimelineCompact] = useState(false);
   // A shared 1 Hz tick so the clock and freshness ages update without the scene
   // driving React, and without each panel owning its own timer.
   const [uiNow, setUiNow] = useState(() => Date.now());
@@ -169,7 +174,17 @@ export function App() {
       )}
 
       <div className="hud">
-        <header className="panel brand">
+        {/* Opening the Inspector auto-compacts the rest: on a phone the map would
+            otherwise be squeezed between four panels at once. */}
+        <header className="panel brand" data-compact={brandCompact || Boolean(selected)}>
+          <button
+            className="brand-toggle"
+            onClick={() => setBrandCompact((v) => !v)}
+            aria-label={brandCompact ? "情報を展開" : "情報を折りたたむ"}
+            aria-expanded={!brandCompact}
+          >
+            {brandCompact ? "▾" : "▴"}
+          </button>
           <h1>JAPAN LIVE</h1>
           <div className="tagline">V1 — TOKYO TRAINS</div>
 
@@ -226,6 +241,13 @@ export function App() {
                 {p.label}
               </button>
             ))}
+            <button
+              className="preset-btn city"
+              onClick={() => sceneRef.current?.flyTo(CITY_VIEW)}
+              title="3D建物が見える斜め視点"
+            >
+              CITY VIEW
+            </button>
             <button className="preset-btn tour" data-active={tourRunning} onClick={onTour}>
               {tourRunning ? "TOUR 停止" : "TOUR"}
             </button>
@@ -244,6 +266,7 @@ export function App() {
 
         <div className="right-stack" data-open={panelsOpen}>
           <LayerPanel layers={snapshot.layers} health={snapshot.sceneHealth} onToggle={onToggle} />
+          <BuildingDiagnosticsPanel diagnostics={snapshot.buildings} />
           <DataStatus
             providers={snapshot.providers}
             health={snapshot.sceneHealth}
@@ -280,7 +303,15 @@ export function App() {
 
         <AttributionBar attributions={snapshot.attributions} datasetNote={snapshot.dataset?.note} />
 
-        <div className="timeline-wrap">
+        <div className="timeline-wrap" data-compact={timelineCompact || Boolean(selected)}>
+          <button
+            className="timeline-toggle"
+            onClick={() => setTimelineCompact((v) => !v)}
+            aria-label={timelineCompact ? "タイムラインを展開" : "タイムラインを折りたたむ"}
+            aria-expanded={!timelineCompact}
+          >
+            {timelineCompact ? "▴ 時刻" : "▾"}
+          </button>
           <Timeline
             mode={snapshot.clock.mode}
             speed={snapshot.clock.speed}

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { blockPlateau } from "./helpers.js";
 
 /**
  * The LIVE data path, end to end, against a stubbed gateway.
@@ -67,6 +68,8 @@ async function stubGateway(
 }
 
 async function boot(page: Page) {
+  // This file is about the realtime data path. See e2e/helpers.ts.
+  await blockPlateau(page);
   await page.goto(`/?gateway=${encodeURIComponent(GATEWAY)}`);
   await page.waitForSelector(".cesium-widget canvas", { timeout: 45_000 });
   await expect(page.locator(".boot")).toHaveCount(0, { timeout: 45_000 });

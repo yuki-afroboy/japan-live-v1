@@ -18,6 +18,7 @@ import {
 } from "@japan-live/providers";
 import { CONFIG, IS_DEMO_MODE } from "../config.js";
 import type { SceneHealth } from "../scene/viewer.js";
+import type { BuildingDiagnostics } from "../scene/buildings.js";
 
 export interface LayerToggles {
   terrain: boolean;
@@ -49,6 +50,7 @@ export interface AppSnapshot {
   trainCount: number;
   dataset?: { name: string; approximate: boolean; note?: string };
   sceneHealth: SceneHealth;
+  buildings?: BuildingDiagnostics;
 }
 
 type Listener = (snapshot: AppSnapshot) => void;
@@ -79,6 +81,7 @@ export class AppStore {
     buildings: "loading",
     notes: {},
   };
+  private buildingDiagnostics?: BuildingDiagnostics;
   private polling = false;
   private lastPollAt = 0;
   /**
@@ -125,6 +128,7 @@ export class AppStore {
       trainCount: this.entities.length,
       dataset: this.dataset,
       sceneHealth: this.sceneHealth,
+      buildings: this.buildingDiagnostics,
     };
   }
 
@@ -269,6 +273,26 @@ export class AppStore {
   seekServiceSeconds(seconds: number): void {
     this.clock.seekServiceSeconds(seconds);
     this.emit();
+  }
+
+  /**
+   * Building state arrives ~2x/second while tiles stream. Only re-notify React when
+   * something a human would notice actually changed, or the panel would drive a
+   * render at the scene's frame rate.
+   */
+  setBuildingDiagnostics(next: BuildingDiagnostics): void {
+    const prev = this.buildingDiagnostics;
+    const changed =
+      !prev ||
+      prev.status !== next.status ||
+      prev.wardsLoaded !== next.wardsLoaded ||
+      prev.wardsFailed !== next.wardsFailed ||
+      prev.visible !== next.visible ||
+      prev.lod !== next.lod ||
+      prev.lastError !== next.lastError ||
+      Math.abs(prev.cameraAltitude - next.cameraAltitude) > 25;
+    this.buildingDiagnostics = next;
+    if (changed) this.emit();
   }
 
   setSceneHealth(patch: Partial<SceneHealth>): void {

@@ -59,24 +59,34 @@ documented. See `docs/DECISIONS.md` D-002.
 
 ## 3. PLATEAU 3D Tiles (東京 3D建築物)
 
+**V1.1 で全面的に再調査・修正。V1 の記述には誤りがありました。**
+
 | Field | Value |
 | --- | --- |
 | Publisher | 国土交通省 Project PLATEAU (MLIT) |
-| Official documentation | https://docs.plateauview.mlit.go.jp/datasets/3d-tiles/ , `Project-PLATEAU/plateau-streaming-tutorial` `3d-tiles/` |
-| Catalog API | `https://api.plateauview.mlit.go.jp/datacatalog/plateau-datasets` → JSON list with `name`, ward codes, `type`, `url`, `composite_url` |
-| Tileset URL | `composite_url` resolves to a `tileset.json`. Direct asset form: `https://assets.cms.plateau.reearth.io/assets/<hash>/<code>_<ward>_pref_<year>_citygml_<v>_op_bldg_3dtiles_<code>_<ward>_lod<N>/tileset.json` |
-| Versioning | The catalog supports a `…-latest` designation (e.g. `13101-bldg-lod2-latest`) so a year is never hardcoded. The app resolves through the catalog at runtime and can be pinned by config. |
-| Format | 3D Tiles (b3dm) |
-| Authentication | None |
-| Coverage | Per-municipality. V1 loads Tokyo 23 wards only. |
-| Update frequency | Annual data releases, revisions without notice |
-| License | PLATEAU open data, CC BY 4.0 (G空間情報センター). **Confirm the per-dataset licence line in the catalog response.** |
+| Official documentation | https://docs.plateauview.mlit.go.jp/datasets/3d-tiles/ , API リファレンス https://docs.plateauview.mlit.go.jp/api/ |
+| **GraphQL カタログ** | `https://api.plateauview.mlit.go.jp/datacatalog/graphql` （ミラー: `https://api.plateau.reearth.io/datacatalog/graphql`） |
+| Schema (一次情報) | `eukarya-inc/PLATEAU-VIEW` `server/datacatalog/plateauapi/schema.graphql` — MLIT の PLATEAU VIEW 実装そのもの |
+| クエリ | `datasets(input: { areaCodes: [...], includeTypes: ["bldg"] })` → `PlateauDataset.items[]` |
+| 主要フィールド | `PlateauDatasetItem.url`（CDN 実体）, `compositeUrl`, **`latestUrl`**, `lod`, `texture`, `format`（`CESIUM3DTILES`）, `formatVersion` |
+| **3D Tiles URL 形式** | `https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/{areaCode}-{typeCode}-lod{N}[-interior][-texture\|-notexture]-{year\|latest}/tileset.json` |
+| 例（新宿区 LOD1） | `https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/13104-bldg-lod1-latest/tileset.json` |
+| Versioning | `latest` を指定すると各自治体の最新整備年度に自動追従します（データ年度のハードコード不要、spec §9） |
+| Format | 3D Tiles 1.0 / 1.1（2025年度以降 Flow 変換分は 1.1） |
+| Authentication | 不要 |
+| Coverage | 自治体単位。V1 は東京23区（13101–13123）のみ |
+| License | PLATEAU オープンデータ（G空間情報センター）。**各データセットの表示条件を利用時に確認すること** |
 | Required attribution | `3D都市モデル: Project PLATEAU (国土交通省)` |
-| CORS | **UNVERIFIED** from this container. Loaded directly by CesiumJS; failure is non-fatal. |
-| Expiration | Asset URLs are year-stamped; the catalog `latest` path avoids pinning. |
-| DataMode | n/a |
-| Fallback | Catalog unreachable → bundled seed tileset list. Seed list fails → **buildings-off mode**, app still runs. |
-| Audited | 2026-08-31, from MLIT streaming tutorial + PLATEAU 配信サービス docs |
+| CORS | **UNVERIFIED。** サーバは `middleware.CORSWithConfig{ AllowOrigins: conf.Origin }` を使用しており、許可オリジンはデプロイ時の環境変数です。ソースからは判定できず、本コンテナからは実測もできません（D-001）。このため manifest は composite URL と CDN 直リンクの両方を保持し、順に試行します。 |
+| DataMode | n/a（背景レイヤー） |
+| Fallback | manifest → 区ごとに候補URLを順に試行 → 全滅なら建物オフ＋診断パネルに理由表示。アプリは落ちません。 |
+| Audited | 2026-09-01（V1.1 再調査） |
+
+### V1 の記述の何が誤っていたか
+
+- V1 は REST の `/datacatalog/plateau-datasets` を実行時にブラウザから解析していましたが、**レスポンス構造を推測**していました（`composite_url` / `ward_code` などのスネークケース、`name` に `"bldg"` が含まれる前提）。実際の `name` は「建築物モデル（新宿区）」のような日本語で、フィルタが1件も通りませんでした。
+- その結果カタログ解決が常に0件となり、ハードコードされた**千代田区LOD1の1件だけ**にフォールバックしていました。新宿区のタイルセットは存在しませんでした。
+- 「`13101-bldg-lod2-latest` のような latest 指定が使える」ことは正しかったものの、その URL を**組み立てる実装がありませんでした**。
 
 ## 4. ODPT — 東京都交通局 (Toei) 列車ロケーション情報
 

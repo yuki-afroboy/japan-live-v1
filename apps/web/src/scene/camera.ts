@@ -12,15 +12,49 @@ export interface CameraPreset {
   heading?: number;
 }
 
-/** Spec §22. Japan down to individual districts, one click each. */
+/**
+ * Spec §22. Japan down to individual districts, one click each.
+ *
+ * The city-scale presets are deliberately low and steeply oblique. A near-overhead
+ * view flattens a skyline into a street map: you cannot tell a 200 m tower from a
+ * car park. Pitch around -25° with the camera below roof-height-times-ten is what
+ * makes 3D buildings read as buildings.
+ */
 export const CAMERA_PRESETS: CameraPreset[] = [
   { id: "japan", label: "日本", labelEn: "Japan", longitude: 138.2, latitude: 36.5, height: 2_200_000, pitch: -80 },
   { id: "kanto", label: "関東", labelEn: "Kanto", longitude: 139.6, latitude: 35.7, height: 420_000, pitch: -70 },
   { id: "tokyo", label: "東京", labelEn: "Tokyo", longitude: 139.75, latitude: 35.66, height: 42_000, pitch: -55 },
-  { id: "tokyo-station", label: "東京駅", labelEn: "Tokyo Sta.", longitude: 139.7671, latitude: 35.6760, height: 1_900, pitch: -38 },
-  { id: "shinjuku", label: "新宿", labelEn: "Shinjuku", longitude: 139.7005, latitude: 35.6860, height: 1_700, pitch: -35 },
-  { id: "shibuya", label: "渋谷", labelEn: "Shibuya", longitude: 139.7016, latitude: 35.6550, height: 1_500, pitch: -34 },
+  //
+  // These are positioned by geometry, not by eye: at height H and pitch p the camera
+  // looks at ground roughly H/tan(|p|) ahead, so each one is placed that far back from
+  // the landmark it should frame. Pointing a low oblique camera at the sky over a
+  // district is how the first attempt put the skyline off the bottom of the screen.
+  //
+  // 西新宿の超高層ビル群 (139.692, 35.690), framed from the south-west.
+  { id: "shinjuku", label: "新宿", labelEn: "Shinjuku", longitude: 139.6800, latitude: 35.6766, height: 900, pitch: -24, heading: 33 },
+  // 丸の内 (139.766, 35.681), framed from the south-west.
+  { id: "tokyo-station", label: "東京駅", labelEn: "Tokyo Sta.", longitude: 139.7546, latitude: 35.6689, height: 850, pitch: -24, heading: 36 },
+  // 渋谷スクランブル周辺 (139.7016, 35.6595), framed from the south.
+  { id: "shibuya", label: "渋谷", labelEn: "Shibuya", longitude: 139.6968, latitude: 35.6480, height: 780, pitch: -23, heading: 22 },
 ];
+
+/**
+ * CITY VIEW — the framing that shows Tokyo as a three-dimensional city.
+ * Low, oblique, and pointed at 西新宿, which has the densest cluster of tall
+ * buildings in the PLATEAU data.
+ */
+export const CITY_VIEW: CameraPreset = {
+  id: "city",
+  label: "CITY VIEW",
+  labelEn: "City View",
+  // 1.5 km south-west of the cluster at 600 m and -22°, so the towers sit in the
+  // middle of the frame with sky behind them.
+  longitude: 139.6822,
+  latitude: 35.6784,
+  height: 600,
+  pitch: -22,
+  heading: 35,
+};
 
 export function flyToPreset(viewer: Cesium.Viewer, preset: CameraPreset, duration = 2.6): void {
   viewer.camera.flyTo({

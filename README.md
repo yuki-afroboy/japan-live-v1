@@ -4,7 +4,7 @@
 実際の街が現れ、その中を電車が動いている——それを眺めること自体が楽しい、という
 プロダクトです。乗換案内でも、運行情報サイトでもありません。
 
-**現在のバージョン: V1 — TOKYO TRAINS**
+**現在のバージョン: V1.1 — TOKYO TRAINS + Visual Foundation**
 
 ---
 
@@ -13,7 +13,9 @@
 - 宇宙から見た日本列島。現在時刻に合わせた昼夜表現
 - 日本全国の3D地形（PLATEAU Terrain）
 - 東京へのシームレスなズーム
-- 東京23区の3D建物（PLATEAU 3D Tiles、カメラ高度に応じて読み込み）
+- **東京23区の3D建物**（PLATEAU 3D Tiles、カメラ位置に応じて近い区だけ読み込み）
+- **PLATEAU Buildings 診断パネル**（取得元・読込区数・表示状態・カメラ高度・LOD・失敗URL）
+- **CITY VIEW** — 3D都市が最も分かる斜め視点プリセット
 - 都営地下鉄4路線 + 東京メトロ9路線の路線・駅
 - 路線形状の上を動く列車（直線ではなく実際の線形に沿って移動）
 - **データ種別（DataMode）の明示** — リアルタイム / 時刻表 / 模擬 の区別
@@ -83,6 +85,7 @@ npm run e2e          # E2E (要 npx playwright install chromium)
 npm run build        # 本番ビルド
 npm run data:demo    # デモデータセットを再生成
 npm run data:gtfs    # ODPT から実データセットを生成（要 APIキー）
+npm run data:plateau # PLATEAU 公式カタログから 3D建物 manifest を再生成
 ```
 
 ---
@@ -158,6 +161,17 @@ ODPT_CONSUMER_KEY=xxxx npm run data:gtfs
 
 ---
 
+## 3D建物が表示されないときは
+
+画面右の **PLATEAU BUILDINGS** パネルが理由を表示します。
+
+| 表示 | 意味と対処 |
+| --- | --- |
+| `カメラが高すぎます` | 建物は高度12km以下で読み込まれます。「東京」か「CITY VIEW」を押してください |
+| `ERROR` + 失敗URL | 「詳細ログ」を開くと失敗した URL と HTTP ステータスが確認できます |
+| `Manifest (公式URL規則から生成)` | まだ公式カタログに問い合わせていない状態です。`npm run data:plateau` で実URLに更新できます |
+| `一部のみ` | 一部の区だけ読み込めています。端末負荷を抑えるため近い区のみを読み込む設計です |
+
 ## データ出典
 
 すべて [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) に記録しています。
@@ -178,7 +192,8 @@ ODPT_CONSUMER_KEY=xxxx npm run data:gtfs
 - **デモデータの路線形状は概算です。** 手作業で作成したもので測量データではありません。`npm run data:gtfs` で置き換わります
 - 東京メトロの位置は時刻表ベースです（運行情報のみリアルタイム）
 - 3D建物は東京23区のみ
-- 開発環境の制約により、地形・建物・ベースマップの実描画は未検証です（[docs/DECISIONS.md](docs/DECISIONS.md) D-001）
+- 開発環境の制約により、**PLATEAU の実タイル取得は未検証**です。ビルド環境から `*.mlit.go.jp` に到達できないためで、描画パイプライン自体は実際の3D Tilesフィクスチャで検証済みです（[docs/DECISIONS.md](docs/DECISIONS.md) D-001, D-012）
+- PLATEAU の CORS 許可オリジンはデプロイ時設定のため未確認です。manifest は composite URL と CDN 直リンクの両方を保持し順に試行します
 
 ---
 

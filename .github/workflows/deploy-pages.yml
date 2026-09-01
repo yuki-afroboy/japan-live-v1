@@ -24,6 +24,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Refresh the PLATEAU manifest from the official catalog
+        # Runners have open network, so Pages gets catalog-verified tileset URLs.
+        # Non-fatal: the builder keeps the committed manifest if the catalog is down,
+        # and refuses to downgrade a catalog-derived manifest to a pattern-derived one.
+        continue-on-error: true
+        run: npm run data:plateau
+
       - name: Build
         # No gateway URL is set here on purpose: the public build runs in DEMO MODE
         # with no credentials of any kind (spec §43). Set VITE_GATEWAY_URL as a
