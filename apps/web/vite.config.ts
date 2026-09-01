@@ -3,9 +3,11 @@ import react from "@vitejs/plugin-react";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { dirname } from "node:path";
 
 const require = createRequire(import.meta.url);
-const cesiumRoot = fileURLToPath(new URL("./node_modules/cesium/Build/Cesium", import.meta.url));
+// Resolve Cesium wherever npm hoisted it, rather than assuming a local node_modules.
+const cesiumRoot = dirname(require.resolve("cesium/package.json")) + "/Build/Cesium";
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 /**

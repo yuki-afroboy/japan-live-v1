@@ -136,6 +136,28 @@ export class ProviderRegistry {
     return { entities, alerts, states };
   }
 
+  /**
+   * A state row for every registered provider, polled or not.
+   *
+   * Disabled providers are never polled, so without this they would silently vanish
+   * from the Data Status panel — but "JR East: DISABLED, and here is why" is precisely
+   * the thing that panel exists to say.
+   */
+  initialStates(): ProviderState[] {
+    return this.providers.map((p) => {
+      const caps = p.getCapabilities();
+      return {
+        id: p.id,
+        name: p.name,
+        status: p.enabled ? "SCHEDULE" : "DISABLED",
+        effectiveDataMode: p.enabled ? caps.bestDataMode : "UNAVAILABLE",
+        entityCount: 0,
+        disabledReason: caps.disabledReason,
+        attribution: p.getAttribution(),
+      } satisfies ProviderState;
+    });
+  }
+
   /** Attribution for every registered provider that is actually contributing. */
   attributions(): Attribution[] {
     const seen = new Set<string>();

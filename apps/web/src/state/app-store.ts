@@ -81,6 +81,12 @@ export class AppStore {
   };
   private polling = false;
   private lastPollAt = 0;
+  /**
+   * useSyncExternalStore compares snapshots by identity, so getSnapshot MUST return the
+   * same object until something actually changes — building a fresh one each call is an
+   * infinite render loop.
+   */
+  private cached: AppSnapshot | null = null;
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -88,12 +94,20 @@ export class AppStore {
     return () => this.listeners.delete(listener);
   }
 
+  /** Invalidate the cached snapshot and notify subscribers. */
   private emit(): void {
+    this.cached = null;
     const snap = this.snapshot();
     for (const l of this.listeners) l(snap);
   }
 
   snapshot(): AppSnapshot {
+    if (this.cached) return this.cached;
+    this.cached = this.buildSnapshot();
+    return this.cached;
+  }
+
+  private buildSnapshot(): AppSnapshot {
     return {
       ready: this.ready,
       loadError: this.loadError,
@@ -164,6 +178,10 @@ export class AppStore {
 
     // Always registered, always off, always visible in Data Status (D-007).
     this.registry.register(new JREastProvider());
+
+    // Seed a row for every provider so disabled ones (JR East) are visible from the
+    // start rather than only appearing if they happen to be polled.
+    this.providerStates = this.registry.initialStates();
 
     this.ready = true;
     await this.poll(Date.now(), true);
