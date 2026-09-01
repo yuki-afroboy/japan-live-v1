@@ -40,6 +40,10 @@ export function App() {
   // On a phone the panels would cover the map, which is the one thing the product is.
   // They collapse behind a toggle there and stay open on desktop.
   const [panelsOpen, setPanelsOpen] = useState(false);
+  // The brand block and the timeline are the two largest permanent obstructions on a
+  // phone. Both collapse to a single line, and the Inspector collapses them for you.
+  const [brandCompact, setBrandCompact] = useState(false);
+  const [timelineCompact, setTimelineCompact] = useState(false);
   // A shared 1 Hz tick so the clock and freshness ages update without the scene
   // driving React, and without each panel owning its own timer.
   const [uiNow, setUiNow] = useState(() => Date.now());
@@ -170,7 +174,17 @@ export function App() {
       )}
 
       <div className="hud">
-        <header className="panel brand">
+        {/* Opening the Inspector auto-compacts the rest: on a phone the map would
+            otherwise be squeezed between four panels at once. */}
+        <header className="panel brand" data-compact={brandCompact || Boolean(selected)}>
+          <button
+            className="brand-toggle"
+            onClick={() => setBrandCompact((v) => !v)}
+            aria-label={brandCompact ? "情報を展開" : "情報を折りたたむ"}
+            aria-expanded={!brandCompact}
+          >
+            {brandCompact ? "▾" : "▴"}
+          </button>
           <h1>JAPAN LIVE</h1>
           <div className="tagline">V1 — TOKYO TRAINS</div>
 
@@ -289,7 +303,15 @@ export function App() {
 
         <AttributionBar attributions={snapshot.attributions} datasetNote={snapshot.dataset?.note} />
 
-        <div className="timeline-wrap">
+        <div className="timeline-wrap" data-compact={timelineCompact || Boolean(selected)}>
+          <button
+            className="timeline-toggle"
+            onClick={() => setTimelineCompact((v) => !v)}
+            aria-label={timelineCompact ? "タイムラインを展開" : "タイムラインを折りたたむ"}
+            aria-expanded={!timelineCompact}
+          >
+            {timelineCompact ? "▴ 時刻" : "▾"}
+          </button>
           <Timeline
             mode={snapshot.clock.mode}
             speed={snapshot.clock.speed}

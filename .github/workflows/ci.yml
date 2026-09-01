@@ -57,7 +57,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run build
-      - run: npx playwright test e2e/smoke.spec.ts e2e/render.spec.ts e2e/live-path.spec.ts e2e/mobile.spec.ts
+      - run: npm run e2e
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

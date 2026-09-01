@@ -71,9 +71,12 @@ move to typed arrays.
 
 1. **Real-hardware performance is unmeasured.** V1's build environment has no GPU, so
    frame rate, memory and tile behaviour were never observed. Measure before optimizing.
-2. **Terrain, buildings and basemap were never seen rendering.** Their hosts are
-   egress-blocked in the build environment (D-001). The code paths and fallbacks are
-   tested; the actual imagery is not.
+2. **Terrain, buildings and basemap were never seen rendering with real data.** Their
+   hosts are egress-blocked in the build environment (D-001). V1.1 closed part of this
+   for buildings: the pipeline is now verified against a real generated 3D Tiles
+   fixture, so everything except PLATEAU's own endpoints is proven. What remains
+   unverified is whether those endpoints serve tiles to a browser from a github.io
+   origin (their CORS allowlist is a deploy-time variable — D-012).
 3. **Station labels overlap at some zooms.** Cesium's `LabelCollection` has no built-in
    declutter; V1 mitigates with distance conditions only.
 4. **Metro `odpt:Train` availability is still unprobed against the live API.**

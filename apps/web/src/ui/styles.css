@@ -358,6 +358,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
   text-shadow: 0 1px 3px #000; letter-spacing: 0.06em;
 }
 
+/* ---------- Collapsible chrome ----------
+   Desktop has room for everything; these only do anything on a phone.
+   This default MUST precede the mobile media query: equal specificity means the
+   later rule wins, and declaring it afterwards silently disabled the toggles. */
+.brand-toggle, .timeline-toggle { display: none; }
+
 /* ---------- Mobile ---------- */
 @media (max-width: 780px) {
   .hud { gap: 8px; padding: 8px; grid-template-rows: auto 1fr auto; }
@@ -406,6 +412,34 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .stats { display: none; }
   .search input { width: 100%; }
   .intro-skip { bottom: 210px; }
+
+  /* Both large permanent panels collapse to a single line, so the map keeps the
+     screen while the clock and the LIVE/DEMO badge stay readable. */
+  .brand { position: relative; }
+  .brand-toggle {
+    display: block; position: absolute; top: 4px; right: 6px;
+    background: none; border: none; color: var(--text-faint);
+    font-size: 12px; padding: 4px 6px; line-height: 1;
+  }
+  .brand[data-compact="true"] .tagline,
+  .brand[data-compact="true"] .clock-date,
+  .brand[data-compact="true"] .demo-warning { display: none; }
+  .brand[data-compact="true"] { padding: 6px 26px 6px 10px; }
+  .brand[data-compact="true"] h1 { font-size: 11px; letter-spacing: 0.1em; }
+  .brand[data-compact="true"] .mode-row { margin-top: 4px; }
+  .brand[data-compact="true"] .clock { font-size: 14px; }
+
+  .timeline-wrap { position: relative; }
+  .timeline-toggle {
+    display: block; position: absolute; top: -22px; right: 4px;
+    background: var(--panel); border: 1px solid var(--panel-border);
+    border-radius: 6px; color: var(--text-dim);
+    font-size: 10px; padding: 2px 8px; line-height: 1.5;
+  }
+  .timeline-wrap[data-compact="true"] .track,
+  .timeline-wrap[data-compact="true"] .track-ticks,
+  .timeline-wrap[data-compact="true"] .timeline-hint { display: none; }
+  .timeline-wrap[data-compact="true"] .timeline { padding: 6px 10px; }
 }
 
 /* ---------- Building diagnostics ---------- */
