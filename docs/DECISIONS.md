@@ -272,3 +272,34 @@ may disable a control.
 **Found by:** the geometry probe added in D-015, whose second toggle click hung until the
 test deadline. The three "timeouts" that followed were this one bug, not slow rendering;
 raising the deadline would have hidden a real defect behind a plausible excuse.
+
+---
+
+### D-017 — On a phone the drawer is the only scroll container
+
+**Context.** V1.1 shipped a PLATEAU diagnostics panel that a phone user could not reach.
+The mobile drawer scrolled, and every `.panel-body` inside it also scrolled, capped at
+`26vh`. iOS Safari gives the drag to the innermost scrollable ancestor, so a finger
+starting in LAYERS moved LAYERS and stopped there; PLATEAU BUILDINGS and DATA STATUS
+below it were in the DOM and unreachable. Measured at 390×844: the drawer held 761 px of
+content in a 387 px window, and the LAYERS body alone held 408 px inside 219 px.
+
+**Decision.** One scroll container per screen. On mobile `.right-stack` scrolls; panel
+bodies lay out at natural height (`max-height: none; overflow: visible`). The single
+exception is the developer log, which is opt-in and bounded at 150 px.
+
+Two supporting changes follow from the same measurement: the six V2 placeholder toggles,
+about half the LAYERS panel, collapse behind a disclosure, and CITY VIEW and TOUR move
+out of the horizontally scrolling preset row into a pinned group. CITY VIEW is the view
+that shows whether buildings loaded — at 375 px the old single row pushed it past the
+right edge, so the control for diagnosing the bug was itself only findable by swiping.
+
+**Tested as reachability, not presence.** `e2e/mobile-diagnostics.spec.ts` runs at 390×844
+and 375×667 and asserts `toBeInViewport()` after scrolling, that no panel body is its own
+scroller, and — the gesture that actually failed — that a wheel scroll starting over the
+LAYERS body moves the drawer. Verified against the pre-fix code: that test reports "a
+scroll starting inside LAYERS did not move the drawer; the panel trapped it".
+
+**Known limitation.** `scrollIntoViewIfNeeded()` can drive an inner scroller
+programmatically where a finger cannot, so the reachability assertions alone pass on the
+old code too. The structural and gesture assertions are the ones that discriminate.

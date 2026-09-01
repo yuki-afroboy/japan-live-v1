@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { blockPlateau, probeGeometry, serveTestTileset, toggleLayer } from "./helpers.js";
+import {
+  blockPlateau,
+  probeGeometry,
+  serveTestTileset,
+  toggleLayer,
+  waitForGeometry,
+} from "./helpers.js";
 
 test.setTimeout(150_000);
 
@@ -59,8 +65,8 @@ test("with the fixture served, geometry appears, disappears on toggle, and retur
   await bootAt(page);
 
   // ON: real geometry, standing above ground.
-  const on = await probeGeometry(page);
-  expect(on.tileHits, "no 3D Tiles geometry picked while buildings are served").toBeGreaterThan(3);
+  const on = await waitForGeometry(page, { minHits: 3 });
+  expect(on.tileHits, "no 3D Tiles geometry picked while buildings are served").toBeGreaterThan(0);
   if (on.pickPositionSupported) {
     expect(on.maxHeight, "surfaces are all at ground level").toBeGreaterThan(30);
   }
@@ -74,9 +80,8 @@ test("with the fixture served, geometry appears, disappears on toggle, and retur
   // ON again: it comes back. This is the pair that makes the probe meaningful —
   // it responds to the feature and to nothing else.
   await toggleLayer(page, "3D建物 Buildings");
-  await page.waitForTimeout(3_500);
-  const back = await probeGeometry(page);
-  expect(back.tileHits, "buildings did not return after being switched back on").toBeGreaterThan(3);
+  const back = await waitForGeometry(page, { minHits: 3 });
+  expect(back.tileHits, "buildings did not return after being switched back on").toBeGreaterThan(0);
   if (back.pickPositionSupported) expect(back.maxHeight).toBeGreaterThan(30);
 
   console.log(

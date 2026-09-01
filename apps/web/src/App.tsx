@@ -235,22 +235,33 @@ export function App() {
         </header>
 
         <div className="top-center">
+          {/*
+            Two groups on purpose. The location presets scroll horizontally when they
+            do not fit; CITY VIEW and TOUR are pinned and never do. CITY VIEW is the
+            view that shows whether 3D buildings loaded, so it must not be something a
+            user has to discover by swiping — at 375px the old single row pushed it and
+            TOUR off the end.
+          */}
           <nav className="panel presets" aria-label="カメラプリセット">
-            {CAMERA_PRESETS.map((p) => (
-              <button key={p.id} className="preset-btn" onClick={() => sceneRef.current?.flyTo(p)}>
-                {p.label}
+            <div className="preset-scroll">
+              {CAMERA_PRESETS.map((p) => (
+                <button key={p.id} className="preset-btn" onClick={() => sceneRef.current?.flyTo(p)}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div className="preset-pinned">
+              <button
+                className="preset-btn city"
+                onClick={() => sceneRef.current?.flyTo(CITY_VIEW)}
+                title="3D建物が見える斜め視点"
+              >
+                CITY VIEW
               </button>
-            ))}
-            <button
-              className="preset-btn city"
-              onClick={() => sceneRef.current?.flyTo(CITY_VIEW)}
-              title="3D建物が見える斜め視点"
-            >
-              CITY VIEW
-            </button>
-            <button className="preset-btn tour" data-active={tourRunning} onClick={onTour}>
-              {tourRunning ? "TOUR 停止" : "TOUR"}
-            </button>
+              <button className="preset-btn tour" data-active={tourRunning} onClick={onTour}>
+                {tourRunning ? "停止" : "TOUR"}
+              </button>
+            </div>
           </nav>
           <SearchBox network={store.network} onPick={onSearchPick} />
         </div>

@@ -290,10 +290,23 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 /* ---------- Presets + search ---------- */
 .top-center { grid-column: 2; grid-row: 1; display: flex; justify-content: center; align-items: flex-start; gap: 8px; }
-.presets { display: flex; gap: 3px; padding: 5px; flex-wrap: wrap; justify-content: center; }
+.presets { display: flex; gap: 4px; padding: 5px; align-items: center; max-width: 100%; }
+/* Locations scroll when they do not fit... */
+.preset-scroll {
+  display: flex; gap: 3px; flex: 0 1 auto; min-width: 0;
+  overflow-x: auto; scrollbar-width: none;
+}
+.preset-scroll::-webkit-scrollbar { display: none; }
+/* ...while these two never scroll out of reach. */
+.preset-pinned {
+  display: flex; gap: 3px; flex: 0 0 auto;
+  padding-left: 4px; border-left: 1px solid var(--panel-border);
+}
 .preset-btn {
   padding: 5px 10px; font-size: 11px; border-radius: 5px;
   background: transparent; border: 1px solid transparent; color: var(--text-dim);
+  /* Never let flex squeeze a label into a vertical column of characters. */
+  white-space: nowrap; flex: 0 0 auto;
 }
 .preset-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); }
 .preset-btn.tour { color: var(--accent); border-color: rgba(78, 168, 255, 0.35); }
@@ -372,7 +385,17 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .clock { font-size: 16px; }
   .demo-warning { max-width: none; }
 
-  /* The panels are a drawer here, not a wall. Closed, the map has the screen. */
+  /*
+   * ONE scroll container, not four.
+   *
+   * The drawer scrolled AND each panel body scrolled inside it, capped at 26vh. On
+   * iOS Safari the inner scroller swallows the gesture, so a finger drag inside LAYERS
+   * only moved LAYERS — PLATEAU BUILDINGS and DATA STATUS behind it were unreachable.
+   * Measured at 390x844: the drawer needed 761px of content in 387px, while the LAYERS
+   * body alone held 408px inside a 219px window.
+   *
+   * The drawer is the only scroller now; the bodies lay out at their natural height.
+   */
   .panels-toggle {
     display: block;
     grid-column: 3; grid-row: 1;
@@ -384,20 +407,37 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
   .right-stack {
     grid-column: 1 / span 3; grid-row: 2;
-    align-items: stretch; align-self: start;
+    align-items: stretch; align-self: stretch;
     margin-top: 0;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    /* Room for the collapsed brand block above and the timeline below. */
+    max-height: calc(100vh - 210px);
+    overscroll-behavior: contain;
   }
   .right-stack[data-open="false"] { display: none; }
-  .right-stack > .panel { width: 100%; }
-  .panel-body { max-height: 26vh; }
+  .right-stack > .panel { width: 100%; flex: 0 0 auto; }
+
+  /* No inner scrollers: the drawer above is the single scroll container. */
+  .right-stack .panel-body {
+    max-height: none;
+    overflow: visible;
+  }
+  /* The developer log is the one place a bounded inner scroll is still wanted —
+     it can run to dozens of entries — but it is opt-in and short. */
+  .right-stack .diag-log {
+    max-height: 150px;
+    overflow-y: auto;
+  }
 
   .top-center {
     grid-column: 1 / span 3; grid-row: 3;
     flex-direction: column; align-items: stretch;
     margin-bottom: 4px;
   }
-  .presets { justify-content: flex-start; overflow-x: auto; flex-wrap: nowrap; }
+  .presets { padding: 4px; }
+  .preset-btn { padding: 6px 9px; }
+  .preset-pinned .preset-btn.city { font-weight: 700; }
   .timeline-wrap { grid-row: 4; }
   .hud { grid-template-rows: auto 1fr auto auto auto; }
 
