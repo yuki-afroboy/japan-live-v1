@@ -35,6 +35,10 @@ export function createViewer(container: HTMLElement): Cesium.Viewer {
     navigationHelpButton: false,
     navigationInstructionsInitiallyVisible: false,
     creditContainer: document.createElement("div"), // credits are rendered by our own UI
+    // Cesium's built-in error panel is a modal that covers the map and blocks every
+    // control behind it. We surface scene errors through our own diagnostics instead,
+    // so one bad layer degrades rather than taking the whole app hostage.
+    showRenderLoopErrors: false,
     baseLayer: false,
     // Only render when something changed. This is the single biggest power and
     // battery win on a map that is often still.

@@ -5,10 +5,11 @@ import type { SearchResult } from "@japan-live/transit";
 import type { Speed } from "@japan-live/simulation";
 import { AppStore, type LayerToggles } from "./state/app-store.js";
 import { SceneController } from "./scene/controller.js";
-import { CAMERA_PRESETS } from "./scene/camera.js";
+import { CAMERA_PRESETS, CITY_VIEW } from "./scene/camera.js";
 import { Inspector } from "./ui/Inspector.js";
 import { LayerPanel } from "./ui/LayerPanel.js";
 import { DataStatus } from "./ui/DataStatus.js";
+import { BuildingDiagnosticsPanel } from "./ui/BuildingDiagnostics.js";
 import { Timeline } from "./ui/Timeline.js";
 import { SearchBox } from "./ui/SearchBox.js";
 import { AttributionBar } from "./ui/Attribution.js";
@@ -226,6 +227,13 @@ export function App() {
                 {p.label}
               </button>
             ))}
+            <button
+              className="preset-btn city"
+              onClick={() => sceneRef.current?.flyTo(CITY_VIEW)}
+              title="3D建物が見える斜め視点"
+            >
+              CITY VIEW
+            </button>
             <button className="preset-btn tour" data-active={tourRunning} onClick={onTour}>
               {tourRunning ? "TOUR 停止" : "TOUR"}
             </button>
@@ -244,6 +252,7 @@ export function App() {
 
         <div className="right-stack" data-open={panelsOpen}>
           <LayerPanel layers={snapshot.layers} health={snapshot.sceneHealth} onToggle={onToggle} />
+          <BuildingDiagnosticsPanel diagnostics={snapshot.buildings} />
           <DataStatus
             providers={snapshot.providers}
             health={snapshot.sceneHealth}

@@ -20,9 +20,24 @@ interface TrainRecord {
   smoothed: SmoothedState;
   point: Cesium.PointPrimitive;
   billboard: Cesium.Billboard;
-  model?: Cesium.Primitive;
   lastSeen: number;
 }
+
+/**
+ * A simple box car, reused from a fixed pool.
+ *
+ * Spec §18 asks for a low-poly generic vehicle up close, and §D-009 forbids licensed
+ * rolling-stock models. A Primitive's modelMatrix can be moved every frame without
+ * rebuilding its geometry, so a small pool costs one draw call each and nothing else.
+ */
+interface CarSlot {
+  primitive: Cesium.Primitive;
+  trainId?: string;
+}
+
+const MAX_3D_CARS = 18;
+/** Metres. Beyond this a box is smaller than the billboard it would replace. */
+const CAR_3D_RANGE = 1_400;
 
 export interface TrainLayerOptions {
   xray: boolean;
@@ -77,6 +92,7 @@ export class TrainLayer {
   private readonly points: Cesium.PointPrimitiveCollection;
   private readonly billboards: Cesium.BillboardCollection;
   private readonly records = new Map<string, TrainRecord>();
+  private readonly cars: CarSlot[] = [];
   private lod: ReturnType<typeof trainLodFor> = "point";
   private xray = false;
 
@@ -88,6 +104,34 @@ export class TrainLayer {
     this.billboards = viewer.scene.primitives.add(
       new Cesium.BillboardCollection({ scene: viewer.scene }),
     );
+    this.buildCarPool();
+  }
+
+  /** One reusable box car per pool slot, hidden until a train claims it. */
+  private buildCarPool(): void {
+    const geometry = Cesium.BoxGeometry.fromDimensions({
+      vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
+      // A generic ~20 m car: long, narrow, and tall enough to read as a vehicle.
+      dimensions: new Cesium.Cartesian3(20.0, 3.0, 3.6),
+    });
+
+    for (let i = 0; i < MAX_3D_CARS; i++) {
+      const primitive = new Cesium.Primitive({
+        geometryInstances: new Cesium.GeometryInstance({
+          geometry,
+          attributes: {
+            color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.WHITE),
+          },
+          id: { kind: "train-car", slot: i },
+        }),
+        appearance: new Cesium.PerInstanceColorAppearance({ translucent: false, closed: true }),
+        asynchronous: false,
+        modelMatrix: Cesium.Matrix4.IDENTITY.clone(),
+        show: false,
+      });
+      this.viewer.scene.primitives.add(primitive);
+      this.cars.push({ primitive });
+    }
   }
 
   /**
@@ -123,9 +167,6 @@ export class TrainLayer {
       if (record.lastSeen !== now) {
         this.points.remove(record.point);
         this.billboards.remove(record.billboard);
-        if (record.model) {
-          this.viewer.scene.primitives.remove(record.model);
-        }
         this.records.delete(id);
       }
     }
@@ -144,7 +185,17 @@ export class TrainLayer {
     this.points.show = visible && lod === "point";
     this.billboards.show = visible && (lod === "billboard" || lod === "model");
 
-    if (!visible) return;
+    if (!visible) {
+      for (const slot of this.cars) {
+        slot.primitive.show = false;
+        slot.trainId = undefined;
+      }
+      return;
+    }
+
+    // Up close, the nearest trains become simple 3D cars.
+    const cameraPos = this.viewer.camera.positionWC;
+    const near: { record: TrainRecord; distance: number; cartesian: Cesium.Cartesian3 }[] = [];
 
     for (const record of this.records.values()) {
       const { position, heading } = sample(record.smoothed, now);
@@ -154,6 +205,11 @@ export class TrainLayer {
       const emphasized =
         record.entity.id === options.selectedId || record.entity.id === options.followId;
       const lineColor = record.entity.details?.lineColor ?? "#7fd1ff";
+
+      if (lod === "model") {
+        const distance = Cesium.Cartesian3.distance(cameraPos, cartesian);
+        if (distance < CAR_3D_RANGE) near.push({ record, distance, cartesian });
+      }
 
       if (lod === "point") {
         const p = record.point;
@@ -183,7 +239,71 @@ export class TrainLayer {
         record.point.show = false;
       }
     }
+
+    this.updateCars(near, options);
     this.viewer.scene.requestRender();
+  }
+
+  /** Assign the pool to the closest trains and place each box on the track. */
+  private updateCars(
+    near: { record: TrainRecord; distance: number; cartesian: Cesium.Cartesian3 }[],
+    options: TrainLayerOptions,
+  ): void {
+    near.sort((a, b) => a.distance - b.distance);
+    const chosen = near.slice(0, MAX_3D_CARS);
+
+    for (let i = 0; i < this.cars.length; i++) {
+      const slot = this.cars[i]!;
+      const target = chosen[i];
+      if (!target) {
+        slot.primitive.show = false;
+        slot.trainId = undefined;
+        continue;
+      }
+
+      // A Primitive throws if its attributes are read before it finishes building.
+      if (!slot.primitive.ready) {
+        slot.primitive.show = false;
+        continue;
+      }
+
+      const { record, cartesian } = target;
+      const heading = record.entity.heading ?? 0;
+
+      // East-north-up frame at the train, rotated so +X runs along the track.
+      const enu = Cesium.Transforms.eastNorthUpToFixedFrame(cartesian);
+      const spin = Cesium.Matrix3.fromRotationZ(Cesium.Math.toRadians(90 - heading));
+      Cesium.Matrix4.multiply(
+        enu,
+        Cesium.Matrix4.fromRotationTranslation(spin, Cesium.Cartesian3.ZERO),
+        slot.primitive.modelMatrix,
+      );
+
+      const emphasized =
+        record.entity.id === options.selectedId || record.entity.id === options.followId;
+      const color = Cesium.Color.fromCssColorString(
+        record.entity.details?.lineColor ?? "#7fd1ff",
+      );
+      try {
+        const attributes = slot.primitive.getGeometryInstanceAttributes({
+          kind: "train-car",
+          slot: i,
+        });
+        if (attributes) {
+          attributes.color = Cesium.ColorGeometryInstanceAttribute.toValue(
+            emphasized ? Cesium.Color.WHITE : color.brighten(0.25, new Cesium.Color()),
+            attributes.color as Uint8Array,
+          );
+        }
+      } catch {
+        // Colouring a car is cosmetic; never let it take the frame down.
+      }
+
+      slot.primitive.show = true;
+      slot.trainId = record.entity.id;
+      // The billboard would otherwise sit on top of its own 3D car.
+      record.billboard.show = false;
+    }
   }
 
   /**
@@ -238,9 +358,10 @@ export class TrainLayer {
   }
 
   destroy(): void {
-    for (const record of this.records.values()) {
-      if (record.model) this.viewer.scene.primitives.remove(record.model);
+    for (const slot of this.cars) {
+      this.viewer.scene.primitives.remove(slot.primitive);
     }
+    this.cars.length = 0;
     this.records.clear();
     this.viewer.scene.primitives.remove(this.points);
     this.viewer.scene.primitives.remove(this.billboards);

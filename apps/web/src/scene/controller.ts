@@ -4,7 +4,7 @@ import { LOD } from "@japan-live/shared";
 import type { AppStore } from "../state/app-store.js";
 import { CONFIG } from "../config.js";
 import { createViewer, installBasemap, installTerrain } from "./viewer.js";
-import { destroyBuildings, loadBuildings, updateBuildingLod, type BuildingSet } from "./buildings.js";
+import { BuildingLayer, type BuildingDiagnostics } from "./buildings.js";
 import { installLighting, isNightAt, setSceneTime } from "./lighting.js";
 import { RailLayer } from "./rail-layer.js";
 import { TrainLayer } from "./train-layer.js";
@@ -15,6 +15,7 @@ import {
   playIntro,
   playTour,
   releaseFollow,
+  viewCenter,
   type CameraPreset,
   type FollowView,
 } from "./camera.js";
@@ -43,7 +44,7 @@ export class SceneController {
 
   private railLayer: RailLayer | null = null;
   private trainLayer: TrainLayer;
-  private buildings: BuildingSet = { tilesets: [], status: "loading", source: "none" };
+  private buildings: BuildingLayer;
 
   private selectedId: string | undefined;
   private followId: string | undefined;
@@ -62,6 +63,7 @@ export class SceneController {
   private fpsFrames = 0;
   private lastStatsAt = 0;
   private lastSimRefreshAt = 0;
+  private lastBuildingUpdateAt = 0;
   private destroyed = false;
   private animationFrame = 0;
 
@@ -72,6 +74,7 @@ export class SceneController {
     this.viewer = createViewer(container);
     installLighting(this.viewer);
     this.trainLayer = new TrainLayer(this.viewer);
+    this.buildings = new BuildingLayer(this.viewer);
 
     this.handler = new Cesium.ScreenSpaceEventHandler(this.viewer.canvas);
     this.handler.setInputAction(
@@ -106,7 +109,15 @@ export class SceneController {
     // A render error leaves a blank canvas that looks exactly like a working app with
     // nothing in view, so it must never pass silently.
     this.viewer.scene.renderError.addEventListener((_scene, error) => {
-      console.error("[JAPAN LIVE] scene render error", error);
+      // Print the message and stack, not the object: a minified build renders the
+      // object as a two-letter class name and tells you nothing.
+      const err = error as { message?: string; stack?: string; name?: string };
+      console.error(
+        `[JAPAN LIVE] scene render error: ${err?.name ?? "Error"}: ${err?.message ?? String(error)}\n${err?.stack ?? ""}`,
+      );
+      this.store.setSceneHealth({
+        notes: { buildings: `描画エラー: ${err?.message ?? "unknown"}` },
+      });
     });
 
     if (new URLSearchParams(location.search).has("debug")) {
@@ -144,16 +155,10 @@ export class SceneController {
     }
 
     // Buildings load last: they are the heaviest layer and the least essential.
-    this.buildings = await loadBuildings(this.viewer, this.abort.signal);
-    if (this.destroyed) {
-      destroyBuildings(this.viewer, this.buildings);
-      return;
-    }
-    this.store.setSceneHealth({
-      buildings: this.buildings.status,
-      notes: this.buildings.note ? { buildings: this.buildings.note } : {},
-    });
-    updateBuildingLod(this.buildings, cameraAltitude(this.viewer));
+    await this.buildings.loadManifest(this.abort.signal);
+    if (this.destroyed) return;
+    this.buildings.update(cameraAltitude(this.viewer), viewCenter(this.viewer));
+    this.publishBuildingDiagnostics();
   }
 
   /** Drives continuous rendering while anything is actually moving. */
@@ -208,8 +213,17 @@ export class SceneController {
 
     if (this.followId) this.updateFollow(simNow);
 
+    // Buildings are maintained on a timer, not on camera change alone: toggling the
+    // layer does not move the camera, and loads settle after the last camera event.
+    if (nowReal - this.lastBuildingUpdateAt > 400) {
+      this.lastBuildingUpdateAt = nowReal;
+      this.buildings.setEnabled(layers.buildings);
+      this.buildings.update(altitude, viewCenter(this.viewer));
+    }
+
     if (nowReal - this.lastStatsAt > 500) {
       this.lastStatsAt = nowReal;
+      this.publishBuildingDiagnostics();
       const fps = this.fpsFrames > 0 ? this.fpsAccum / this.fpsFrames : 0;
       this.fpsAccum = 0;
       this.fpsFrames = 0;
@@ -222,17 +236,28 @@ export class SceneController {
     }
   }
 
-  /** Camera-driven LOD. Runs on camera change, not per frame. */
+  /** Camera-driven building loading and LOD. Runs on camera change, not per frame. */
   private onCameraChanged(): void {
     if (this.destroyed) return;
     const altitude = cameraAltitude(this.viewer);
     const layers = this.store.snapshot().layers;
 
-    if (layers.buildings) {
-      if (updateBuildingLod(this.buildings, altitude)) this.viewer.scene.requestRender();
-    } else {
-      for (const t of this.buildings.tilesets) t.show = false;
-    }
+    this.buildings.setEnabled(layers.buildings);
+    this.buildings.update(altitude, viewCenter(this.viewer));
+    this.publishBuildingDiagnostics();
+  }
+
+  /** Push building state to the store so the diagnostics panel can show it. */
+  private publishBuildingDiagnostics(): void {
+    const diagnostics = this.buildings.diagnostics(cameraAltitude(this.viewer));
+    this.store.setBuildingDiagnostics(diagnostics);
+    this.store.setSceneHealth({
+      buildings: this.buildings.status,
+      notes:
+        diagnostics.status === "ERROR"
+          ? { buildings: diagnostics.manifestError ?? diagnostics.lastError ?? "3D建物を読み込めませんでした" }
+          : {},
+    });
   }
 
   /** Fresh entities from the providers. */
@@ -376,7 +401,7 @@ export class SceneController {
     this.handler.destroy();
     this.trainLayer.destroy();
     this.railLayer?.destroy();
-    destroyBuildings(this.viewer, this.buildings);
+    this.buildings.destroy();
     if (!this.viewer.isDestroyed()) this.viewer.destroy();
   }
 }

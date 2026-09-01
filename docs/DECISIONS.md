@@ -139,3 +139,60 @@ credentials, and GitHub Pages serves exactly that. Configuring
 
 **Why.** Spec §41-43. Development and public review must not be blocked on an account
 only the operator can create.
+
+---
+
+### D-012 — PLATEAU buildings load from a committed manifest, not a runtime catalog query
+
+**Context.** V1 resolved MLIT's data catalog in the browser on every page load and
+guessed at the response shape. The guess was wrong, the filter matched nothing, and the
+code fell back to a single hardcoded Chiyoda tileset. On a real iPhone at Shinjuku there
+were no buildings at all, and nothing on screen explained why.
+
+**Decision.** Three layers, in this order:
+
+1. **A manifest committed to the repository** (`apps/web/public/data/plateau-manifest.json`),
+   holding an ordered list of candidate tileset URLs for each of the 23 wards. The app
+   reads a static file it controls.
+2. **A builder** (`scripts/data/build-plateau-manifest.mjs`) that queries MLIT's official
+   GraphQL catalog for the real `latestUrl` / `url` values, run by CI at deploy time and
+   by the operator on demand. It refuses to downgrade a catalog-derived manifest to a
+   pattern-derived one when the network is unavailable.
+3. **The documented composite URL scheme** as the always-present fallback inside every
+   manifest entry: `…/datacatalog/3dtiles/{area}-bldg-lod{N}-latest/tileset.json`.
+
+**Rejected: resolving the catalog at runtime.** It puts a third-party API on the critical
+path of every page load, and a schema change, an outage, or a CORS refusal then means no
+buildings at all — which is exactly what happened. The user's own guidance was explicit:
+buildings appearing reliably on GitHub Pages matters more than resolving `latest` in the
+browser. `latest` is still honoured, because the composite endpoint resolves it
+server-side.
+
+**Provenance is recorded, not assumed.** The manifest carries `meta.source`, either
+`catalog` (read back from the API) or `pattern` (derived from the documented scheme), and
+the diagnostics panel displays which one is in use.
+
+**Consequence.** The manifest shipped in this branch is `pattern`-derived, because the
+build container cannot reach any PLATEAU host (D-001). CI regenerates it on deploy.
+
+---
+
+### D-013 — No 3D Tiles style expression may reference an attribute we cannot guarantee
+
+**Context.** Shading buildings by `${feature['bldg:measuredHeight']}` looked better. It
+also blanked the entire map: Cesium's style evaluator throws a `RuntimeError` on
+`undefined >= 150`, the throw propagates out of `evaluateColor`, and the render loop
+stops. Not just the buildings disappear — everything does. The obvious guard,
+`defined()`, is rejected by this styling language ("Unexpected function call").
+
+**Decision.** Buildings use a flat colour. Height is conveyed by silhouette and lighting,
+which needs no attribute at all.
+
+**Rule.** A cosmetic style expression is never worth a whole-scene failure mode on an
+attribute whose presence we cannot verify across every tileset. If height-based shading
+is wanted later, it must be applied after confirming the attribute exists on the actual
+tiles, and behind a guard that has been shown to work.
+
+**Found by:** the building diagnostics panel, which reported
+`板橋区: Unexpected function call "defined"` while the map was blank — the exact class of
+failure V1 gave no way to diagnose.

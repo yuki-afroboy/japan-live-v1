@@ -297,6 +297,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .preset-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); }
 .preset-btn.tour { color: var(--accent); border-color: rgba(78, 168, 255, 0.35); }
+.preset-btn.city { color: #ffd28a; border-color: rgba(255, 210, 138, 0.35); }
 .preset-btn.tour[data-active="true"] { background: var(--accent); color: #04121f; }
 
 .search { position: relative; }
@@ -406,3 +407,39 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .search input { width: 100%; }
   .intro-skip { bottom: 210px; }
 }
+
+/* ---------- Building diagnostics ---------- */
+.diag { display: grid; grid-template-columns: 78px 1fr; gap: 2px 8px; margin: 0; font-size: 11px; }
+.diag dt { color: var(--text-faint); font-size: 10px; }
+.diag dd { margin: 0; font-variant-numeric: tabular-nums; }
+.diag-good { color: var(--live); }
+.diag-bad { color: var(--error); }
+
+.diag-hint {
+  margin-top: 7px; padding: 6px 8px; border-radius: 6px;
+  background: rgba(78, 168, 255, 0.1);
+  border: 1px solid rgba(78, 168, 255, 0.28);
+  color: #b8dbff; font-size: 10px; line-height: 1.5;
+}
+.diag-hint.diag-error {
+  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 107, 107, 0.32);
+  color: #ffc4c4;
+}
+.diag-hint code {
+  font-size: 9.5px; padding: 1px 4px; border-radius: 3px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.diag-toggle {
+  margin-top: 7px; padding: 4px 0; width: 100%; text-align: left;
+  background: none; border: none; color: var(--text-dim); font-size: 10px;
+}
+.diag-toggle:hover { color: var(--text); }
+.diag-log {
+  margin-top: 4px; max-height: 190px; overflow-y: auto;
+  font-size: 9px; line-height: 1.45;
+  border-top: 1px solid var(--panel-border); padding-top: 5px;
+}
+.diag-log > div { margin-bottom: 5px; }
+.diag-url { color: var(--text-faint); word-break: break-all; }
