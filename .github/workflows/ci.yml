@@ -20,15 +20,31 @@ jobs:
       - name: Unit tests
         # No live API is called: every test runs against committed fixtures (spec §60).
         run: npm test
-      - name: Rebuild demo dataset and check it is committed
+      - name: Demo dataset rebuilds and matches the committed one
+        # A byte comparison would always fail on meta.builtAt, so compare everything
+        # else. The committed dataset's own integrity is asserted by the unit tests.
         run: |
+          node -e "require('fs').writeFileSync('/tmp/before.json', JSON.stringify({...JSON.parse(require('fs').readFileSync('apps/web/public/data/demo-dataset.json','utf8')), meta: undefined}))"
           npm run data:demo
-          git diff --exit-code --stat apps/web/public/data/demo-dataset.json \
-            || (echo "demo-dataset.json is out of date; run npm run data:demo" && exit 1)
+          node -e "require('fs').writeFileSync('/tmp/after.json', JSON.stringify({...JSON.parse(require('fs').readFileSync('apps/web/public/data/demo-dataset.json','utf8')), meta: undefined}))"
+          diff -q /tmp/before.json /tmp/after.json \
+            || (echo "demo-dataset.json is out of date; run npm run data:demo and commit" && exit 1)
+          git checkout apps/web/public/data/demo-dataset.json
       - name: Build web
         run: npm run build
       - name: Build gateway
         run: npm run build:gateway
+
+      - name: No credential may reach the public bundle
+        # The ODPT key lives in the gateway as a Worker secret and must never be
+        # inlined by Vite. The only JWTs expected here are the public Cesium ion
+        # tokens (Cesium's default and the PLATEAU one MLIT publishes itself).
+        run: |
+          if grep -rioE "consumerKey|acl:consumer|ODPT_CONSUMER_KEY" apps/web/dist/; then
+            echo "::error::a credential pattern reached the public bundle"
+            exit 1
+          fi
+          echo "no credential patterns in apps/web/dist"
 
   e2e:
     runs-on: ubuntu-latest

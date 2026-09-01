@@ -36,6 +36,9 @@ export function App() {
   const [introPlaying, setIntroPlaying] = useState(true);
   const [tourRunning, setTourRunning] = useState(false);
   const [stats, setStats] = useState<Stats>({ fps: 0, altitude: 0, lod: "point", trains: 0 });
+  // On a phone the panels would cover the map, which is the one thing the product is.
+  // They collapse behind a toggle there and stay open on desktop.
+  const [panelsOpen, setPanelsOpen] = useState(false);
   // A shared 1 Hz tick so the clock and freshness ages update without the scene
   // driving React, and without each panel owning its own timer.
   const [uiNow, setUiNow] = useState(() => Date.now());
@@ -230,7 +233,16 @@ export function App() {
           <SearchBox network={store.network} onPick={onSearchPick} />
         </div>
 
-        <div className="right-stack">
+        <button
+          className="panel panels-toggle"
+          data-open={panelsOpen}
+          aria-expanded={panelsOpen}
+          onClick={() => setPanelsOpen((v) => !v)}
+        >
+          {panelsOpen ? "✕ 閉じる" : "☰ レイヤー / データ"}
+        </button>
+
+        <div className="right-stack" data-open={panelsOpen}>
           <LayerPanel layers={snapshot.layers} health={snapshot.sceneHealth} onToggle={onToggle} />
           <DataStatus
             providers={snapshot.providers}
@@ -266,6 +278,8 @@ export function App() {
           </div>
         )}
 
+        <AttributionBar attributions={snapshot.attributions} datasetNote={snapshot.dataset?.note} />
+
         <div className="timeline-wrap">
           <Timeline
             mode={snapshot.clock.mode}
@@ -279,8 +293,6 @@ export function App() {
           />
         </div>
       </div>
-
-      <AttributionBar attributions={snapshot.attributions} datasetNote={snapshot.dataset?.note} />
 
       <div className="stats">
         {Math.round(stats.fps)} fps · {stats.trains} trains · {stats.lod} ·{" "}

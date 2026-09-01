@@ -72,7 +72,7 @@ export function DataStatus({ providers, health, dataset, now }: Props) {
               <div className="data-name">{label}</div>
               <div className="data-sub">{health.notes[key] ?? "利用できません"}</div>
             </div>
-            <span className="status-chip ERROR">OFF</span>
+            <span className="status-chip OFF">OFF</span>
           </div>
         ))}
       </div>

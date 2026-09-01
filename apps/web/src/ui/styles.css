@@ -124,6 +124,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 
 /* ---------- Top-right: layers and data status ---------- */
+/* Desktop: the toggle is unnecessary, the panels are always open. */
+.panels-toggle { display: none; }
+
 .right-stack {
   grid-column: 3; grid-row: 1 / span 2;
   display: flex; flex-direction: column; gap: 10px;
@@ -189,6 +192,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .status-chip.STALE { color: var(--stale); }
 .status-chip.ERROR { color: var(--error); }
 .status-chip.DISABLED { color: var(--text-faint); }
+/* A map layer that could not load is not the same as a data feed that errored. */
+.status-chip.OFF { color: var(--stale); }
 
 /* ---------- Bottom: timeline ---------- */
 .timeline-wrap {
@@ -355,16 +360,49 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* ---------- Mobile ---------- */
 @media (max-width: 780px) {
   .hud { gap: 8px; padding: 8px; grid-template-rows: auto 1fr auto; }
-  .brand { min-width: 0; padding: 8px 10px; }
+  .brand { min-width: 0; padding: 8px 10px; grid-column: 1 / span 2; }
   .brand h1 { font-size: 13px; }
   .clock { font-size: 16px; }
-  .right-stack { grid-column: 1 / span 3; grid-row: 1; align-items: stretch; margin-top: 78px; }
+  .demo-warning { max-width: none; }
+
+  /* The panels are a drawer here, not a wall. Closed, the map has the screen. */
+  .panels-toggle {
+    display: block;
+    grid-column: 3; grid-row: 1;
+    align-self: start; justify-self: end;
+    padding: 8px 11px; font-size: 11px; font-weight: 600;
+    white-space: nowrap;
+  }
+  .panels-toggle[data-open="true"] { color: var(--accent); }
+
+  .right-stack {
+    grid-column: 1 / span 3; grid-row: 2;
+    align-items: stretch; align-self: start;
+    margin-top: 0;
+    overflow-y: auto;
+  }
+  .right-stack[data-open="false"] { display: none; }
   .right-stack > .panel { width: 100%; }
-  .panel-body { max-height: 30vh; }
-  .top-center { grid-column: 1 / span 3; grid-row: 1; margin-top: 130px; }
+  .panel-body { max-height: 26vh; }
+
+  .top-center {
+    grid-column: 1 / span 3; grid-row: 3;
+    flex-direction: column; align-items: stretch;
+    margin-bottom: 4px;
+  }
   .presets { justify-content: flex-start; overflow-x: auto; flex-wrap: nowrap; }
-  .inspector { grid-column: 1 / span 3; grid-row: 2; width: 100%; max-height: 46vh; }
-  .attribution { max-width: 58vw; bottom: calc(8px + 92px); }
+  .timeline-wrap { grid-row: 4; }
+  .hud { grid-template-rows: auto 1fr auto auto auto; }
+
+  .inspector { grid-column: 1 / span 3; grid-row: 2; width: 100%; max-height: 44vh; align-self: end; }
+  /* In the layout flow rather than floating: absolutely positioned, it landed on
+     top of the camera preset row. */
+  .attribution {
+    position: static;
+    grid-column: 1 / span 3; grid-row: 5;
+    max-width: none; text-align: center; font-size: 8.5px;
+  }
   .stats { display: none; }
   .search input { width: 100%; }
+  .intro-skip { bottom: 210px; }
 }

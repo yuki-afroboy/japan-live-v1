@@ -24,9 +24,23 @@ function bool(key: string, fallback: boolean): boolean {
   return v === "1" || v === "true";
 }
 
+/**
+ * Allow `?gateway=` to point the app at a different gateway — but ONLY when running on
+ * localhost. A link that could redirect a deployed site to an arbitrary data source
+ * would let anyone put fabricated trains on someone else's screen, which is the exact
+ * failure this project exists to prevent. On any other origin the parameter is ignored.
+ */
+function gatewayOverride(): string {
+  if (typeof location === "undefined") return "";
+  const host = location.hostname;
+  const isLocal = host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+  if (!isLocal) return "";
+  return new URLSearchParams(location.search).get("gateway") ?? "";
+}
+
 export const CONFIG = {
   /** Gateway base URL. Empty means DEMO MODE — no realtime provider is constructed. */
-  gatewayUrl: str("VITE_GATEWAY_URL"),
+  gatewayUrl: gatewayOverride() || str("VITE_GATEWAY_URL"),
 
   /**
    * PLATEAU terrain, published by MLIT through Cesium ion (see docs/DECISIONS.md D-002).

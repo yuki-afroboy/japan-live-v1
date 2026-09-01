@@ -55,7 +55,7 @@ test("capture the experience", async ({ page }) => {
   await page.getByRole("button", { name: "地下鉄 X-RAY" }).click();
 
   // 6. Simulation at the morning rush.
-  await page.getByRole("button", { name: "×60" }).click();
+  await page.getByRole("button", { name: "×60", exact: true }).click();
   await page.getByRole("slider", { name: "時刻" }).fill(String(8 * 3600));
   await settle(page, 5_000);
   await page.screenshot({ path: `${OUT}/06-simulation.png` });
@@ -65,11 +65,16 @@ test("capture the experience", async ({ page }) => {
   await settle(page, 6_000);
   await page.screenshot({ path: `${OUT}/07-night.png` });
 
-  // 8. Mobile viewport.
+  // 8. Mobile viewport — panels closed, so the map has the screen.
   await page.getByRole("button", { name: "LIVE" }).click();
   await page.setViewportSize({ width: 414, height: 896 });
   await settle(page, 5_000);
   await page.screenshot({ path: `${OUT}/08-mobile.png` });
+
+  // 8b. Mobile with the panel drawer open.
+  await page.locator(".panels-toggle").click();
+  await page.waitForTimeout(1_200);
+  await page.screenshot({ path: `${OUT}/08b-mobile-panels.png` });
 });
 
 test("capture the inspector by clicking a train", async ({ page }) => {
