@@ -8,10 +8,13 @@ import { mkdirSync } from "node:fs";
  */
 
 const OUT = "screenshots";
+
+// Capturing the whole experience involves many camera flights and tile settles.
+test.setTimeout(300_000);
 test.beforeAll(() => mkdirSync(OUT, { recursive: true }));
 
 async function boot(page: Page) {
-  await page.goto("/?");
+  await page.goto("/?debug=1");
   await page.waitForSelector(".cesium-widget canvas", { timeout: 45_000 });
   await page.waitForTimeout(6_000);
 }

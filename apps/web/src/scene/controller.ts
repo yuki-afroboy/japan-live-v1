@@ -63,6 +63,7 @@ export class SceneController {
   private lastStatsAt = 0;
   private lastSimRefreshAt = 0;
   private destroyed = false;
+  private animationFrame = 0;
 
   constructor(container: HTMLElement, store: AppStore, callbacks: SceneCallbacks) {
     this.store = store;
@@ -95,6 +96,22 @@ export class SceneController {
     this.viewer.camera.percentageChanged = 0.15;
 
     this.removePreRender = this.viewer.scene.preRender.addEventListener(() => this.onFrame());
+
+    // requestRenderMode keeps an idle map from burning a GPU, but MOTION is the whole
+    // product: while trains are on screen the scene must be driven every frame.
+    // Requesting a render from inside preRender does not reliably schedule the next
+    // one, so an explicit ticker owns it — and stops the moment nothing is moving.
+    this.tickAnimation();
+
+    // A render error leaves a blank canvas that looks exactly like a working app with
+    // nothing in view, so it must never pass silently.
+    this.viewer.scene.renderError.addEventListener((_scene, error) => {
+      console.error("[JAPAN LIVE] scene render error", error);
+    });
+
+    if (new URLSearchParams(location.search).has("debug")) {
+      (window as unknown as { __viewer?: Cesium.Viewer }).__viewer = this.viewer;
+    }
   }
 
   /** Async layers. Each one reports its own health and none of them can block startup. */
@@ -136,6 +153,16 @@ export class SceneController {
     });
     updateBuildingLod(this.buildings, cameraAltitude(this.viewer));
   }
+
+  /** Drives continuous rendering while anything is actually moving. */
+  private tickAnimation = (): void => {
+    if (this.destroyed) return;
+    const layers = this.store.snapshot().layers;
+    if (layers.trains && this.trainLayer.count > 0) {
+      this.viewer.scene.requestRender();
+    }
+    this.animationFrame = window.requestAnimationFrame(this.tickAnimation);
+  };
 
   private onFrame(): void {
     if (this.destroyed) return;
@@ -341,6 +368,7 @@ export class SceneController {
     this.abort.abort();
     this.intro?.cancel();
     this.tour?.cancel();
+    window.cancelAnimationFrame(this.animationFrame);
     this.removePreRender?.();
     this.removeCameraChanged?.();
     this.handler.destroy();

@@ -4,10 +4,14 @@
  * recorded in docs/DECISIONS.md when they change.
  */
 export const LOD = {
-  /** Above this, individual trains are not drawn at all — only aggregate glow. */
-  trainsAggregateAbove: 300_000,
-  /** Between aggregate and this, trains are single points. */
-  trainsPointsAbove: 40_000,
+  /**
+   * Above this, individual trains are not drawn — only aggregate glow.
+   * Set from the camera presets: nationwide (2200 km) aggregates, Kanto (420 km)
+   * must still show points, per spec §18.
+   */
+  trainsAggregateAbove: 900_000,
+  /** Between aggregate and this, trains are single points (the Kanto band). */
+  trainsPointsAbove: 60_000,
   /** Between points and this, trains are billboards. */
   trainsBillboardAbove: 2_500,
   /** Below `trainsBillboardAbove`, trains are simple 3D geometry. */

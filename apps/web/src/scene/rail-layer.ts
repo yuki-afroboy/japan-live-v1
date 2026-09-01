@@ -72,7 +72,7 @@ export class RailLayer {
         positions: this.positionsFor(simplified, railway.underground),
         width: 2.4,
         material: Cesium.Material.fromType("PolylineOutline", {
-          color: color.withAlpha(0.92),
+          color: color.withAlpha(this.alphaFor(railway.underground)),
           outlineColor: Cesium.Color.BLACK.withAlpha(0.45),
           outlineWidth: 1.0,
         }),
@@ -88,12 +88,14 @@ export class RailLayer {
    * altitude is a projection, not the real depth.
    */
   private positionsFor(points: [number, number][], underground: boolean): Cesium.Cartesian3[] {
-    const height = underground
-      ? this.xray
-        ? LOD.xrayProjectionAltitude
-        : LOD.undergroundDepth
-      : 6;
+    const height = underground ? (this.xray ? LOD.xrayProjectionAltitude : 10) : 6;
     return points.map(([lon, lat]) => Cesium.Cartesian3.fromDegrees(lon, lat, height));
+  }
+
+  /** Underground lines read faintly at the surface, and brightly once X-Ray lifts them. */
+  private alphaFor(underground: boolean): number {
+    if (!underground) return 0.92;
+    return this.xray ? 0.95 : 0.42;
   }
 
   private buildStations(): void {
@@ -161,6 +163,11 @@ export class RailLayer {
         12,
       );
       polyline.positions = this.positionsFor(simplified, true);
+      polyline.material = Cesium.Material.fromType("PolylineOutline", {
+        color: Cesium.Color.fromCssColorString(railway.color).withAlpha(this.alphaFor(true)),
+        outlineColor: Cesium.Color.BLACK.withAlpha(0.45),
+        outlineWidth: 1.0,
+      });
     }
 
     // In X-Ray the globe goes translucent so the network reads as a system beneath

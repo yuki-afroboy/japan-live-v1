@@ -41,16 +41,26 @@ export function createViewer(container: HTMLElement): Cesium.Viewer {
     requestRenderMode: true,
     maximumRenderTimeChange: 0.5,
     contextOptions: {
-      webgl: { powerPreference: "high-performance", antialias: true },
+      webgl: {
+        powerPreference: "high-performance",
+        antialias: true,
+        // Reading pixels back needs the buffer preserved, which costs performance, so
+        // it is enabled only for the visual-regression tests that ask for it.
+        preserveDrawingBuffer: new URLSearchParams(location.search).has("debug"),
+      },
     },
   });
 
   const scene = viewer.scene;
-  scene.globe.baseColor = Cesium.Color.fromCssColorString("#0a1120");
-  scene.backgroundColor = Cesium.Color.fromCssColorString("#04060c");
+  // The globe must be legible with NO imagery at all: that is the documented fallback
+  // when GSI tiles are unreachable, and a near-black sphere on a near-black sky is
+  // indistinguishable from a broken app.
+  scene.globe.baseColor = Cesium.Color.fromCssColorString("#16243d");
+  scene.backgroundColor = Cesium.Color.fromCssColorString("#03050a");
   if (scene.skyAtmosphere) scene.skyAtmosphere.show = true;
   scene.fog.enabled = true;
   scene.fog.density = 0.0002;
+  scene.globe.atmosphereBrightnessShift = 0.15;
   scene.globe.showGroundAtmosphere = true;
   scene.globe.depthTestAgainstTerrain = true;
   // Underground trains are drawn below the surface; the globe must not hide them

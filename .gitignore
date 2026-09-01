@@ -36,3 +36,9 @@ data/raw/
 .DS_Store
 Thumbs.db
 *.log
+
+# Test and build artifacts
+test-results/
+playwright-report/
+apps/web/dist/
+apps/gateway/dist/

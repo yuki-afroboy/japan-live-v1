@@ -161,7 +161,10 @@ export class TrainLayer {
         p.show = true;
         // Colour by line so the network's structure is visible at range; the data
         // mode is carried by the outline, and never by colour alone.
-        p.color = Cesium.Color.fromCssColorString(lineColor).withAlpha(options.night ? 1 : 0.92);
+        const underground = record.entity.details?.underground ?? false;
+        p.color = Cesium.Color.fromCssColorString(lineColor).withAlpha(
+          underground && !this.xray ? 0.78 : 0.95,
+        );
         p.outlineColor = Cesium.Color.fromCssColorString(
           dataModeColor(record.entity.dataMode),
         ).withAlpha(0.9);
@@ -193,7 +196,10 @@ export class TrainLayer {
   private heightFor(entity: MobilityEntity): number {
     const underground = entity.details?.underground ?? false;
     if (!underground) return 22;
-    return this.xray ? LOD.xrayProjectionAltitude : LOD.undergroundDepth;
+    // Below the surface the globe occludes them entirely, and every V1 line is
+    // underground — so normally they sit at the surface, drawn dimmer, and X-Ray
+    // raises them clear of it.
+    return this.xray ? LOD.xrayProjectionAltitude : 18;
   }
 
   /** The entity under a screen position, for click-to-select. */
