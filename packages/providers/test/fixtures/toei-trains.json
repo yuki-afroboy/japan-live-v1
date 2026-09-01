@@ -1,0 +1,53 @@
+[
+  {
+    "@id": "urn:ucode:_00001C000000000000010000030C1071",
+    "@type": "odpt:Train",
+    "dc:date": "2026-08-18T07:30:12+09:00",
+    "dct:valid": "2026-08-18T07:32:12+09:00",
+    "odpt:operator": "odpt.Operator:Toei",
+    "odpt:railway": "odpt.Railway:Toei.Oedo",
+    "odpt:trainNumber": "0712A",
+    "odpt:trainType": "odpt.TrainType:Toei.Local",
+    "odpt:railDirection": "odpt.RailDirection:Toei.Hikarigaoka",
+    "odpt:fromStation": "odpt.Station:Toei.Oedo.Roppongi",
+    "odpt:toStation": "odpt.Station:Toei.Oedo.AzabuJuban",
+    "odpt:delay": 60,
+    "odpt:carComposition": 8,
+    "odpt:destinationStation": ["odpt.Station:Toei.Oedo.Hikarigaoka"]
+  },
+  {
+    "@id": "urn:ucode:_00001C000000000000010000030C1072",
+    "@type": "odpt:Train",
+    "dc:date": "2026-08-18T07:30:12+09:00",
+    "odpt:operator": "odpt.Operator:Toei",
+    "odpt:railway": "odpt.Railway:Toei.Asakusa",
+    "odpt:trainNumber": "0701T",
+    "odpt:fromStation": "odpt.Station:Toei.Asakusa.Daimon",
+    "odpt:delay": 0
+  },
+  {
+    "@id": "no-timestamp",
+    "@type": "odpt:Train",
+    "odpt:operator": "odpt.Operator:Toei",
+    "odpt:railway": "odpt.Railway:Toei.Mita",
+    "odpt:trainNumber": "0900I",
+    "odpt:fromStation": "odpt.Station:Toei.Mita.Hibiya",
+    "odpt:toStation": "odpt.Station:Toei.Mita.Otemachi"
+  },
+  {
+    "@id": "unknown-station",
+    "@type": "odpt:Train",
+    "dc:date": "2026-08-18T07:30:12+09:00",
+    "odpt:railway": "odpt.Railway:Toei.Oedo",
+    "odpt:trainNumber": "9999X",
+    "odpt:fromStation": "odpt.Station:Toei.Oedo.NotARealStation",
+    "odpt:toStation": "odpt.Station:Toei.Oedo.AlsoNotReal"
+  },
+  {
+    "@id": "no-railway",
+    "@type": "odpt:Train",
+    "dc:date": "2026-08-18T07:30:12+09:00",
+    "odpt:trainNumber": "1234Z",
+    "odpt:fromStation": "odpt.Station:Toei.Oedo.Roppongi"
+  }
+]

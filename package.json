@@ -1,0 +1,37 @@
+{
+  "name": "japan-live",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "JAPAN LIVE — a real-time Japanese digital twin. V1: TOKYO TRAINS.",
+  "workspaces": [
+    "packages/*",
+    "apps/web",
+    "apps/gateway"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "npm run dev -w @japan-live/web",
+    "dev:gateway": "npm run dev -w @japan-live/gateway",
+    "build": "npm run build -w @japan-live/web",
+    "build:gateway": "npm run build -w @japan-live/gateway",
+    "preview": "npm run preview -w @japan-live/web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "npm run typecheck",
+    "data:demo": "node scripts/data/build-demo-dataset.mjs",
+    "data:gtfs": "node scripts/data/build-gtfs-dataset.mjs",
+    "e2e": "playwright test e2e/smoke.spec.ts e2e/render.spec.ts e2e/live-path.spec.ts e2e/mobile.spec.ts",
+    "e2e:capture": "CAPTURE=1 playwright test e2e/screenshots.spec.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}
