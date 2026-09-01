@@ -1,5 +1,6 @@
 import * as Cesium from "cesium";
 import { CONFIG } from "../config.js";
+import { currentProfile } from "./quality.js";
 
 export type LayerStatus = "loading" | "ok" | "unavailable";
 
@@ -20,6 +21,7 @@ export interface SceneHealth {
  */
 export function createViewer(container: HTMLElement): Cesium.Viewer {
   Cesium.Ion.defaultAccessToken = CONFIG.cesiumIonToken;
+  const profile = currentProfile();
 
   const viewer = new Cesium.Viewer(container, {
     // The product is the globe. Every Cesium chrome widget is off; our own UI replaces it.
@@ -47,7 +49,9 @@ export function createViewer(container: HTMLElement): Cesium.Viewer {
     contextOptions: {
       webgl: {
         powerPreference: "high-performance",
-        antialias: true,
+        // Nearly cosmetic on its own — see scene.msaaSamples below, which is the
+        // setting that actually costs fragments. See docs/PERFORMANCE.md.
+        antialias: profile.antialias,
         // Reading pixels back needs the buffer preserved, which costs performance, so
         // it is enabled only for the visual-regression tests that ask for it.
         preserveDrawingBuffer: new URLSearchParams(location.search).has("debug"),
@@ -72,12 +76,21 @@ export function createViewer(container: HTMLElement): Cesium.Viewer {
   scene.globe.translucency.enabled = false;
   scene.highDynamicRange = false;
 
+  // Antialiasing, where it is actually paid for. Cesium renders into its own target
+  // with 4x MSAA by default and then runs an FXAA pass over the result. On a phone
+  // that is four times the fragment work of the entire scene plus a full-screen pass,
+  // to smooth edges at a pixel density where the eye cannot resolve them.
+  scene.msaaSamples = profile.msaaSamples;
+  if (scene.postProcessStages?.fxaa) scene.postProcessStages.fxaa.enabled = profile.fxaa;
+
   scene.screenSpaceCameraController.enableCollisionDetection = true;
   scene.screenSpaceCameraController.minimumZoomDistance = 40;
   scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000;
 
-  // Cap device pixel ratio: a 3x phone screen renders 9x the pixels for no visible gain.
-  viewer.resolutionScale = Math.min(window.devicePixelRatio ?? 1, 1.75);
+  // Cap device pixel ratio: a 3x phone screen renders 9x the pixels for no visible
+  // gain, and fragment cost scales with the SQUARE of this number — 1.75 draws 3.06x
+  // the pixels of 1.0. The per-tier cap lives in the quality profile.
+  viewer.resolutionScale = profile.resolutionScale;
 
   return viewer;
 }

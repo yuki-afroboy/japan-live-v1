@@ -1,6 +1,7 @@
 import * as Cesium from "cesium";
 import { LOD } from "@japan-live/shared";
 import { CONFIG } from "../config.js";
+import { currentProfile, type QualityProfile } from "./quality.js";
 import type { LayerStatus } from "./viewer.js";
 
 /**
@@ -98,11 +99,7 @@ function distanceKm(a: [number, number], b: [number, number]): number {
   return (2 * EARTH_R * Math.asin(Math.min(1, Math.sqrt(s)))) / 1000;
 }
 
-/** Phones cannot hold 23 wards of LOD2 geometry. Desktop gets more headroom. */
-function wardBudget(): number {
-  const mobile = typeof window !== "undefined" && window.innerWidth < 780;
-  return mobile ? 4 : 10;
-}
+
 
 export class BuildingLayer {
   private readonly viewer: Cesium.Viewer;
@@ -118,9 +115,12 @@ export class BuildingLayer {
   /** Where the camera was at the last update, so a moving camera can be detected. */
   private lastCenter?: [number, number];
   private lastAltitude = 0;
+  /** How much geometry and memory this device may spend on buildings. */
+  private readonly profile: QualityProfile;
 
-  constructor(viewer: Cesium.Viewer) {
+  constructor(viewer: Cesium.Viewer, profile: QualityProfile = currentProfile()) {
     this.viewer = viewer;
+    this.profile = profile;
   }
 
   async loadManifest(signal?: AbortSignal): Promise<void> {
@@ -167,7 +167,11 @@ export class BuildingLayer {
       if (w.tileset.show !== visible) w.tileset.show = visible;
       // Above the threshold, relax the error so Cesium stops requesting tiles rather
       // than merely not drawing them.
-      const sse = !visible ? 64 : altitude <= LOD.buildingsDetailAltitude ? 12 : 32;
+      const sse = !visible
+        ? 64
+        : altitude <= LOD.buildingsDetailAltitude
+          ? this.profile.detailSse
+          : this.profile.midSse;
       if (w.tileset.maximumScreenSpaceError !== sse) w.tileset.maximumScreenSpaceError = sse;
     }
     if (!visible || !center) return;
@@ -197,7 +201,7 @@ export class BuildingLayer {
       .filter((x) => x.d <= reachKm)
       .sort((a, b) => a.d - b.d);
 
-    const budget = wardBudget();
+    const budget = this.profile.wardBudget;
 
     for (const { ward } of settled ? inRange.slice(0, budget) : []) {
       const existing = this.loaded.get(ward.code);
@@ -237,8 +241,11 @@ export class BuildingLayer {
         try {
           const tileset = await Cesium.Cesium3DTileset.fromUrl(url, {
             maximumScreenSpaceError: 20,
-            cacheBytes: 128 * 1024 * 1024,
-            maximumCacheOverflowBytes: 64 * 1024 * 1024,
+            // Four of these at the desktop's 128 MB is more than a phone will give a
+            // single tab. The budget is per tier, and the ward budget bounds how many
+            // caches can exist at once.
+            cacheBytes: this.profile.tilesetCacheBytes,
+            maximumCacheOverflowBytes: this.profile.tilesetOverflowBytes,
             skipLevelOfDetail: true,
             preferLeaves: true,
             dynamicScreenSpaceError: true,

@@ -6,6 +6,8 @@ import { CONFIG } from "../config.js";
 import { createViewer, installBasemap, installTerrain } from "./viewer.js";
 import { BuildingLayer, type BuildingDiagnostics } from "./buildings.js";
 import { installLighting, isNightAt, setSceneTime } from "./lighting.js";
+import { FrameMetrics } from "./perf.js";
+import { currentProfile, type QualityProfile } from "./quality.js";
 import { RailLayer } from "./rail-layer.js";
 import { TrainLayer } from "./train-layer.js";
 import {
@@ -56,6 +58,8 @@ export class SceneController {
   private handler: Cesium.ScreenSpaceEventHandler;
   private removePreRender: Cesium.Event.RemoveCallback | null = null;
   private removeCameraChanged: Cesium.Event.RemoveCallback | null = null;
+  private removeMoveStart: Cesium.Event.RemoveCallback | null = null;
+  private removeMoveEnd: Cesium.Event.RemoveCallback | null = null;
   private abort = new AbortController();
 
   private lastFrameAt = performance.now();
@@ -66,6 +70,14 @@ export class SceneController {
   private lastBuildingUpdateAt = 0;
   private destroyed = false;
   private animationFrame = 0;
+
+  private readonly metrics = new FrameMetrics();
+  private readonly profile: QualityProfile = currentProfile();
+  /** When train motion alone is next allowed to drive a render. */
+  private nextAnimationAt = 0;
+  /** True between camera moveStart and moveEnd — a drag, a pinch or a flight. */
+  private cameraMoving = false;
+  private lastCameraMoveAt = 0;
 
   constructor(container: HTMLElement, store: AppStore, callbacks: SceneCallbacks) {
     this.store = store;
@@ -98,6 +110,17 @@ export class SceneController {
     );
     this.viewer.camera.percentageChanged = 0.15;
 
+    // moveStart/moveEnd bracket every camera motion — drag, pinch, wheel, flyTo and
+    // Follow alike. They are what lets the animation throttle below stand down while
+    // someone is actually steering, without trying to enumerate input events.
+    this.removeMoveStart = this.viewer.camera.moveStart.addEventListener(() => {
+      this.cameraMoving = true;
+    });
+    this.removeMoveEnd = this.viewer.camera.moveEnd.addEventListener(() => {
+      this.cameraMoving = false;
+      this.lastCameraMoveAt = performance.now();
+    });
+
     this.removePreRender = this.viewer.scene.preRender.addEventListener(() => this.onFrame());
 
     // requestRenderMode keeps an idle map from burning a GPU, but MOTION is the whole
@@ -121,9 +144,28 @@ export class SceneController {
     });
 
     if (new URLSearchParams(location.search).has("debug")) {
-      const w = window as unknown as { __viewer?: Cesium.Viewer; Cesium?: typeof Cesium };
+      const w = window as unknown as {
+        __viewer?: Cesium.Viewer;
+        Cesium?: typeof Cesium;
+        __perf?: () => unknown;
+        __profile?: QualityProfile;
+      };
       w.__viewer = this.viewer;
       w.Cesium = Cesium;
+      // Read by the performance E2E so a measurement never depends on scraping the UI.
+      w.__perf = () => ({
+        ...this.metrics.snapshot(performance.now()),
+        trains: this.trainLayer.count,
+        trainLod: this.trainLayer.currentLod,
+        wardsLoaded: this.buildings.diagnostics(cameraAltitude(this.viewer)).wardsLoaded,
+        tilesetsLoaded: this.buildings.diagnostics(cameraAltitude(this.viewer)).tilesetsLoaded,
+        altitude: cameraAltitude(this.viewer),
+        resolutionScale: this.viewer.resolutionScale,
+        devicePixelRatio: window.devicePixelRatio ?? 1,
+        viewport: `${window.innerWidth}x${window.innerHeight}`,
+        tier: this.profile.tier,
+      });
+      w.__profile = this.profile;
     }
   }
 
@@ -161,15 +203,46 @@ export class SceneController {
     this.publishBuildingDiagnostics();
   }
 
-  /** Drives continuous rendering while anything is actually moving. */
+  /**
+   * Drives continuous rendering while anything is actually moving.
+   *
+   * Measured: with the Trains layer off, this app renders ONE frame in twelve seconds.
+   * Every continuously-rendered frame in the product comes from this ticker, which
+   * makes its cadence the single largest lever on sustained GPU load — larger than any
+   * layer, because turning a layer off only makes each frame cheaper while this
+   * decides how many frames there are.
+   *
+   * On a phone that cadence is capped (30 Hz by default). A city visualisation does not
+   * need 60 fps of train motion, and halving the frame count halves everything
+   * downstream: fragment work, tile traversal, compositing, battery.
+   *
+   * The cap NEVER applies while the camera is moving. A throttled drag or pinch feels
+   * broken, and Follow is a continuous camera motion by definition.
+   */
   private tickAnimation = (): void => {
     if (this.destroyed) return;
+    const now = performance.now();
+    this.metrics.raf(now);
     const layers = this.store.snapshot().layers;
-    if (layers.trains && this.trainLayer.count > 0) {
+    if (layers.trains && this.trainLayer.count > 0 && now >= this.nextAnimationAt) {
+      this.nextAnimationAt = now + this.animationIntervalMs(now);
+      this.metrics.renderRequest(now);
       this.viewer.scene.requestRender();
     }
     this.animationFrame = window.requestAnimationFrame(this.tickAnimation);
   };
+
+  /** 0 means "every animation frame" — the uncapped path, used whenever input is live. */
+  private animationIntervalMs(now: number): number {
+    const steering =
+      this.cameraMoving ||
+      now - this.lastCameraMoveAt < 400 ||
+      this.followId !== undefined ||
+      this.intro !== null ||
+      this.tour !== null;
+    if (steering) return 0;
+    return 1000 / this.profile.animationHz;
+  }
 
   private onFrame(): void {
     if (this.destroyed) return;
@@ -181,6 +254,7 @@ export class SceneController {
       this.fpsAccum += 1000 / dt;
       this.fpsFrames += 1;
     }
+    this.metrics.frame(nowReal);
 
     this.store.clock.tick();
     const simNow = this.store.clock.currentTime;
@@ -198,11 +272,16 @@ export class SceneController {
       });
     }
 
+    // Each span is timed separately so a slow frame can be attributed rather than
+    // guessed at. Four performance.now() calls per frame; the alternative is arguing
+    // about which layer is expensive.
+    const tRailStart = performance.now();
     this.railLayer?.update(
       { xray: layers.xray, showRoutes: layers.railways, showStations: layers.stations },
       altitude,
     );
 
+    const tTrainStart = performance.now();
     this.trainLayer.render(simNow, altitude, {
       xray: layers.xray,
       show: layers.trains,
@@ -211,15 +290,24 @@ export class SceneController {
       night: isNightAt(simNow, 139.7),
     });
 
+    const tFollowStart = performance.now();
     if (this.followId) this.updateFollow(simNow);
 
     // Buildings are maintained on a timer, not on camera change alone: toggling the
     // layer does not move the camera, and loads settle after the last camera event.
+    const tBuildingsStart = performance.now();
     if (nowReal - this.lastBuildingUpdateAt > 400) {
       this.lastBuildingUpdateAt = nowReal;
       this.buildings.setEnabled(layers.buildings);
       this.buildings.update(altitude, viewCenter(this.viewer));
     }
+    const tEnd = performance.now();
+    this.metrics.cpuFrame(
+      tFollowStart - tTrainStart,
+      tTrainStart - tRailStart,
+      tEnd - tBuildingsStart,
+      tBuildingsStart - tFollowStart,
+    );
 
     if (nowReal - this.lastStatsAt > 500) {
       this.lastStatsAt = nowReal;
@@ -233,6 +321,10 @@ export class SceneController {
         lod: this.trainLayer.currentLod,
         trains: this.trainLayer.count,
       });
+      // Percentiles cost a sort. Only pay for it while the panel is on screen.
+      if (this.store.wantsPerformance) {
+        this.store.setPerformance(this.metrics.snapshot(nowReal));
+      }
     }
   }
 
@@ -398,6 +490,8 @@ export class SceneController {
     window.cancelAnimationFrame(this.animationFrame);
     this.removePreRender?.();
     this.removeCameraChanged?.();
+    this.removeMoveStart?.();
+    this.removeMoveEnd?.();
     this.handler.destroy();
     this.trainLayer.destroy();
     this.railLayer?.destroy();
