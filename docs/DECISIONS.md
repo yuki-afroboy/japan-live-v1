@@ -196,3 +196,55 @@ tiles, and behind a guard that has been shown to work.
 **Found by:** the building diagnostics panel, which reported
 `板橋区: Unexpected function call "defined"` while the map was blank — the exact class of
 failure V1 gave no way to diagnose.
+
+---
+
+### D-014 — Tests that are not about buildings do not talk to PLATEAU
+
+**Context.** V1.1's building loader fetches tiles for the wards near the camera. That is
+correct product behaviour. But CI runners have open network, so *every* test that flew
+the camera low over Tokyo — rail, X-Ray, layer toggles — downloaded real PLATEAU tiles
+for up to ten wards and decoded them on a software rasteriser.
+
+The CI timings named the cause exactly: tests that stayed at altitude passed in 35-42 s;
+tests that descended over Tokyo took 78-108 s or hit the deadline. With the main thread
+saturated, Playwright's actionability checks could not settle, so a button that had been
+*resolved* never became *clickable*.
+
+**Decision.** `e2e/helpers.ts` owns two fixtures. `blockPlateau` aborts every PLATEAU
+host, used by smoke, render, live-path and mobile. `serveTestTileset` serves the local
+generated skyline, used by the building tests.
+
+**This changes no production behaviour.** The app still requests PLATEAU exactly as it
+does for a user; in those tests the requests simply fail, which is a path it already
+handles and reports in diagnostics. The alternative — a test-only switch in application
+code — would mean the thing under test is not the thing that ships.
+
+**Note on route order.** Playwright matches the most recently registered route first. A
+manifest URL matches both the host-wide block and the fixture pattern, so the block must
+be registered *first* for the fixture to win. Registering it last silently served zero
+tilesets.
+
+---
+
+### D-015 — Rendering assertions measure difference, not palette size
+
+**Context.** "Buildings must add distinct colours" is a plausible-sounding proxy that is
+simply false. A large flat-shaded mass occludes a more varied background, so it can
+*reduce* the palette. CI measured 1405 colours with buildings against 1480 without, and
+failed a skyline that was rendering correctly.
+
+**Decision.** Three assertions replace it, each testing the actual claim:
+
+- `scene.pick` across a screen grid — is 3D Tiles geometry genuinely under the pixels?
+- `scene.pickPosition` — do the surfaces there stand above ground? (215.8 m measured
+  against a fixture whose tallest tower is 250 m.)
+- ON/OFF **pixel difference ratio** — direction-agnostic, so it cannot be fooled by
+  whether an overlay adds or removes variety.
+
+The same change applies to the rail and X-Ray tests, which had the same flaw.
+
+**And a test of the test.** `e2e/probe-check.spec.ts` runs the probe with PLATEAU blocked
+and requires zero hits, no height, and no frame change. An assertion that passes whether
+or not the feature works is worse than no assertion, and this is the second time in this
+project that a green test hid a blank screen.
