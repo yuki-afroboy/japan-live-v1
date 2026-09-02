@@ -139,3 +139,169 @@ describe("FrameMetrics", () => {
     expect(s.medianFrameMs).toBeCloseTo(1, 5);
   });
 });
+
+/**
+ * The V1.2 additions: the tail of the distribution, and Cesium's own two spans.
+ *
+ * The device report that opened V1.2 had a median of 17 ms and a p95 of 157 ms. An
+ * instrument that only reported an average would have called that "42 ms" and sent us
+ * looking for a uniform 24 fps problem that does not exist. These assertions exist so
+ * the tail cannot silently stop being measured.
+ */
+describe("FrameMetrics — long-frame tail", () => {
+  it("separates p95, p99 and the >100 ms count from the median", () => {
+    const m = new FrameMetrics();
+    let t = 1_000;
+    // 98 fast frames and 2 stalls: a median of 16, a p99 in the stalls.
+    const frames = [
+      ...Array<number>(98).fill(16),
+      150,
+      180,
+    ];
+    for (const dt of frames) {
+      t += dt;
+      m.frame(t);
+    }
+    const s = m.snapshot(t);
+
+    expect(s.medianFrameMs).toBe(16);
+    expect(s.p99FrameMs).toBeGreaterThanOrEqual(150);
+    expect(s.long100).toBe(2);
+    expect(s.long50).toBe(2);
+    // The average alone would read ~19 ms and hide both stalls entirely.
+    expect(s.avgFrameMs).toBeLessThan(25);
+  });
+
+  it("counts a 100 ms frame in long33 and long50 as well", () => {
+    const m = new FrameMetrics();
+    m.frame(1_000);
+    m.frame(1_120);
+    const s = m.snapshot(1_120);
+    expect(s.long33).toBe(1);
+    expect(s.long50).toBe(1);
+    expect(s.long100).toBe(1);
+  });
+});
+
+describe("FrameMetrics — Cesium span attribution", () => {
+  it("attributes an update-pass stall to update, not to draw", () => {
+    const m = new FrameMetrics();
+    let t = 1_000;
+    for (let i = 0; i < 40; i++) {
+      t += 16;
+      m.frame(t);
+      m.spans(t, 2, 0.2, 6, 0, 0);
+    }
+    // One frame where the tile processing queue drained inside the update pass.
+    t += 160;
+    m.frame(t);
+    m.spans(t, 148, 0.2, 6, 37, 4);
+
+    const s = m.snapshot(t);
+    expect(s.cesium.updateMaxMs).toBe(148);
+    expect(s.cesium.renderMaxMs).toBe(6);
+    expect(s.cesium.updateLong50).toBe(1);
+    expect(s.cesium.renderLong50).toBe(0);
+    expect(s.worst?.updateMs).toBe(148);
+    expect(s.worst?.tilesProcessing).toBe(37);
+  });
+
+  it("attributes a draw stall to draw", () => {
+    const m = new FrameMetrics();
+    m.spans(1_000, 2, 0.2, 140, 0, 0);
+    m.spans(1_150, 2, 0.2, 140, 0, 0);
+    const s = m.snapshot(1_150);
+    expect(s.cesium.renderLong50).toBe(2);
+    expect(s.cesium.updateLong50).toBe(0);
+    expect(s.worst?.renderMs).toBe(140);
+  });
+
+  /**
+   * The finding that made this bucket necessary: on CI's software rasteriser a 713 ms
+   * frame contained 0.2 ms of update and 9.8 ms of draw submission. Without `other`,
+   * the panel would have reported a 10 ms frame and the 700 ms would have been
+   * invisible — and a GPU-bound stall would have been mistaken for a fast one.
+   */
+  it("charges frame time outside both spans to `other` rather than losing it", () => {
+    const m = new FrameMetrics();
+    m.raf(1_000);
+    m.raf(1_713); // the browser took 713 ms to turn this frame around
+    m.spans(1_713, 0.2, 0.1, 9.8, 0, 0);
+
+    const worst = m.snapshot(1_713).worst!;
+    expect(worst.frameMs).toBe(713);
+    expect(worst.totalMs).toBeCloseTo(10.1, 5);
+    expect(worst.otherMs).toBeCloseTo(702.9, 5);
+  });
+
+  /**
+   * The trap this guards against.
+   *
+   * With requestRenderMode and a 30 Hz animation cap, two consecutive renders are 33 ms
+   * apart on a device that is doing nothing at all in between. Measuring the frame from
+   * render to render would charge that idle time to the GPU and report a stall on an
+   * idle phone. The browser's own frame period cannot be inflated that way.
+   */
+  it("measures the frame the browser took, not the gap between throttled renders", () => {
+    const m = new FrameMetrics();
+    // 60 Hz browser, but the app only renders every other frame.
+    m.raf(1_000);
+    m.raf(1_016.7);
+    m.spans(1_016.7, 0.5, 0.2, 2, 0, 0);
+    m.raf(1_033.4);
+    m.raf(1_050.1);
+    m.spans(1_050.1, 0.5, 0.2, 2, 0, 0);
+
+    const worst = m.snapshot(1_050.1).worst!;
+    expect(worst.frameMs).toBeCloseTo(16.7, 1);
+    // Not 33 ms, and therefore not ~30 ms of phantom GPU time.
+    expect(worst.otherMs).toBeLessThan(15);
+  });
+
+  it("ranks the worst frame by the whole frame, not by the spans it can see", () => {
+    const m = new FrameMetrics();
+    m.raf(1_000);
+    m.raf(1_016);
+    m.spans(1_016, 1, 0.1, 1, 0, 0);
+    // A busy frame: 60 ms of visible work in a 70 ms browser frame.
+    m.raf(1_086);
+    m.spans(1_086, 40, 0.1, 20, 5, 1);
+    // A slow frame: almost no visible work, but the browser took 300 ms. This is the
+    // one the user felt.
+    m.raf(1_386);
+    m.spans(1_386, 1, 0.1, 2, 0, 0);
+
+    const worst = m.snapshot(1_386).worst!;
+    expect(worst.frameMs).toBe(300);
+    expect(worst.otherMs).toBeGreaterThan(290);
+  });
+
+  it("does not invent a frame length for the first frame or after a backgrounded tab", () => {
+    const m = new FrameMetrics();
+    m.raf(1_000);
+    m.spans(1_000, 1, 0.1, 1, 0, 0);
+    expect(m.snapshot(1_000).worst?.frameMs).toBe(0);
+
+    const n = new FrameMetrics();
+    n.raf(1_000);
+    // Five seconds later: the tab was hidden. That is not a five-second frame.
+    n.raf(6_000);
+    n.spans(6_000, 1, 0.1, 1, 0, 0);
+    expect(n.snapshot(6_000).worst?.frameMs).toBe(0);
+  });
+
+  it("reports the worst frame once, then starts a new window", () => {
+    const m = new FrameMetrics();
+    m.spans(1_000, 120, 0.2, 5, 12, 3);
+    expect(m.snapshot(1_000).worst?.totalMs).toBeCloseTo(125.2, 5);
+    // A stall belongs to the window that reported it; the next window is its own.
+    expect(m.snapshot(1_000).worst).toBeNull();
+  });
+
+  it("has no span numbers at all before any frame is recorded", () => {
+    const m = new FrameMetrics();
+    const s = m.snapshot(1_000);
+    expect(s.cesium.samples).toBe(0);
+    expect(s.worst).toBeNull();
+  });
+});
