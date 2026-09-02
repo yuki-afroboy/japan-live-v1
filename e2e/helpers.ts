@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildLodFixture, type LodFixtureOptions } from "./fixtures/lod-fixture.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -42,6 +43,7 @@ export async function blockPlateau(page: Page): Promise<void> {
 
 const TILESET = JSON.parse(readFileSync(resolve(HERE, "fixtures/tileset/tileset.json"), "utf8"));
 const GLB = readFileSync(resolve(HERE, "fixtures/tileset/buildings.glb"));
+
 
 /**
  * Serve the generated west-Shinjuku fixture in place of PLATEAU, so the building
@@ -85,6 +87,167 @@ export async function serveTestTileset(
   await page.route("**/*.glb", (route) =>
     route.fulfill({ status: 200, contentType: "model/gltf-binary", body: GLB }),
   );
+}
+
+/**
+ * Serve the three-level REPLACE hierarchy instead of the flat fixture.
+ *
+ * `delayLeavesMs` holds back the level-2 content. That is not an artificial
+ * pathology: it is what a phone on a slow connection sees for several seconds every
+ * time the camera settles somewhere new, and it is the only state in which
+ * `skipLevelOfDetail` changes what is drawn. Without it, everything resolves in
+ * milliseconds on a local fixture and both arms of the A/B look identical.
+ */
+export async function serveLodTileset(
+  page: Page,
+  options: { delayLeavesMs?: number; delayLeafFraction?: number } & LodFixtureOptions = {},
+): Promise<{ totalBytes: number; tiles: number }> {
+  const fixture = buildLodFixture({ spacing: options.spacing });
+  const delay = options.delayLeavesMs ?? 0;
+  // Delaying EVERY leaf produces no mixed content at all: nothing refines, so the
+  // tileset just shows a coarse level. The interesting state — some descendants
+  // resolved, their siblings and ancestors not — needs the delay to be uneven, which
+  // is also what a real connection does.
+  const delayFraction = options.delayLeafFraction ?? 1;
+
+  for (const pattern of PLATEAU_PATTERNS.slice(1)) {
+    await page.route(pattern, (route) => route.abort());
+  }
+
+  await page.route("**/datacatalog/3dtiles/**", async (route) => {
+    const url = route.request().url();
+    const file = url.split("/").pop()?.split("?")[0] ?? "";
+
+    const body = fixture.content.get(file);
+    if (body) {
+      if (delay > 0 && file.startsWith("l2-") && shouldDelayLeaf(file, delayFraction)) {
+        await new Promise((done) => setTimeout(done, delay));
+      }
+      await route.fulfill({ status: 200, contentType: "model/gltf-binary", body });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(fixture.tileset),
+    });
+  });
+
+  return { totalBytes: fixture.totalBytes, tiles: fixture.content.size };
+}
+
+/**
+ * Run something that needs the layer controls, leaving the drawer as it was found.
+ *
+ * On a desktop viewport the toggle button is not rendered and the panels are always
+ * on screen, so this is a no-op wrapper there.
+ */
+export async function withDrawer(page: Page, body: () => Promise<void>): Promise<void> {
+  const toggle = page.locator(".panels-toggle");
+  const needsOpening = (await toggle.isVisible()) && (await toggle.getAttribute("data-open")) !== "true";
+  if (needsOpening) await toggle.click();
+  await body();
+  if (needsOpening) await toggle.click();
+  await page.waitForTimeout(400);
+}
+
+/** Deterministic per-leaf choice, so both arms of an A/B hold back the same tiles. */
+function shouldDelayLeaf(file: string, fraction: number): boolean {
+  if (fraction >= 1) return true;
+  if (fraction <= 0) return false;
+  let hash = 0;
+  for (const ch of file) hash = (hash * 31 + ch.charCodeAt(0)) % 1000;
+  return hash / 1000 < fraction;
+}
+
+/**
+ * How much of the frame the building layer actually paints, as a fraction of pixels.
+ *
+ * Measured as buildings-on against buildings-off at the SAME fixed camera with trains
+ * switched off, so the only thing that can differ is the layer under test. That is not
+ * the frame-to-frame diff D-015 rejected — nothing in the scene is moving — and it is
+ * the only way to quantify "the buildings are see-through": a hole in the layer is
+ * pixels the layer did not paint, and nothing else in the frame changes.
+ *
+ * Requires ?debug (preserveDrawingBuffer); returns 0..1.
+ */
+export async function measureBuildingCoverage(page: Page): Promise<number> {
+  const grab = async (): Promise<string> => {
+    await page.evaluate(() => (window as any).__viewer?.scene?.requestRender());
+    await page.waitForTimeout(700);
+    return page.evaluate(() => (window as any).__viewer.canvas.toDataURL("image/png"));
+  };
+
+  // Both captures are taken with the drawer CLOSED — on a phone it covers the whole
+  // viewport, and a comparison made through it would be measuring the panel. The
+  // toggle itself needs the drawer open, so it is opened and closed around each one.
+  const withBuildings = await grab();
+  await withDrawer(page, () => toggleLayer(page, "3D建物 Buildings"));
+  await page.waitForTimeout(1_500);
+  const withoutBuildings = await grab();
+  await withDrawer(page, () => toggleLayer(page, "3D建物 Buildings"));
+  await page.waitForTimeout(1_500);
+
+  return page.evaluate(
+    async ([a, b]) => {
+      const load = (src: string): Promise<HTMLImageElement> =>
+        new Promise((done, fail) => {
+          const img = new Image();
+          img.onload = () => done(img);
+          img.onerror = fail;
+          img.src = src;
+        });
+      const [imgA, imgB] = await Promise.all([load(a!), load(b!)]);
+      const w = imgA.width;
+      const h = imgA.height;
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(imgA, 0, 0);
+      const pixelsA = ctx.getImageData(0, 0, w, h).data;
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(imgB, 0, 0);
+      const pixelsB = ctx.getImageData(0, 0, w, h).data;
+
+      let differing = 0;
+      const total = w * h;
+      for (let i = 0; i < total; i++) {
+        const o = i * 4;
+        const d =
+          Math.abs(pixelsA[o]! - pixelsB[o]!) +
+          Math.abs(pixelsA[o + 1]! - pixelsB[o + 1]!) +
+          Math.abs(pixelsA[o + 2]! - pixelsB[o + 2]!);
+        // 24 over three channels: well above encoder noise, well below the contrast
+        // between a lit building face and the dark basemap behind it.
+        if (d > 24) differing++;
+      }
+      return differing / total;
+    },
+    [withBuildings, withoutBuildings],
+  );
+}
+
+/** Put the camera exactly where a screenshot can be reproduced from. */
+export async function setCamera(
+  page: Page,
+  view: { lon: number; lat: number; height: number; heading: number; pitch: number },
+): Promise<void> {
+  await page.evaluate((v) => {
+    const viewer = (window as any).__viewer;
+    const Cesium = (window as any).Cesium;
+    viewer.camera.cancelFlight();
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(v.lon, v.lat, v.height),
+      orientation: {
+        heading: Cesium.Math.toRadians(v.heading),
+        pitch: Cesium.Math.toRadians(v.pitch),
+        roll: 0,
+      },
+    });
+    viewer.scene.requestRender();
+  }, view);
 }
 
 /*
@@ -176,19 +339,6 @@ export async function probeGeometry(page: Page): Promise<GeometryProbe> {
       pickPositionSupported: Boolean(scene.pickPositionSupported),
     };
   });
-}
-
-/**
- * How much the frame changes on its own over `intervalMs`, with nothing toggled.
- *
- * This is the control for any pixel comparison: trains keep moving, so the question is
- * never "did the frame change" but "did it change more than it would have anyway".
- */
-export async function measureDrift(page: Page, intervalMs: number): Promise<number> {
-  await captureFrame(page, "__drift_a");
-  await page.waitForTimeout(intervalMs);
-  await captureFrame(page, "__drift_b");
-  return frameDiffRatio(page, "__drift_a", "__drift_b");
 }
 
 /** Click a layer toggle in the Layers panel by its accessible name. */

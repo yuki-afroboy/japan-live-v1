@@ -38,12 +38,25 @@ interface Reading {
   p95FrameMs: number;
   long33: number;
   long50: number;
+  long100: number;
+  p99FrameMs: number;
   maxFrameMs: number;
   frames: number;
   windowMs: number;
   rafPerSec: number;
   renderRequestsPerSec: number;
   cpu: { train: number; rail: number; buildings: number; follow: number; total: number };
+  cesium: {
+    updateAvgMs: number;
+    updateP95Ms: number;
+    updateMaxMs: number;
+    renderAvgMs: number;
+    renderP95Ms: number;
+    renderMaxMs: number;
+    updateLong50: number;
+    renderLong50: number;
+    samples: number;
+  };
   trains: number;
   trainLod: string;
   wardsLoaded: number;
@@ -85,7 +98,11 @@ async function measure(page: Page, scenario: string): Promise<Reading> {
     `[PERF] ${scenario.padEnd(34)} ${reading.fps.toFixed(1).padStart(5)} fps  ` +
       `med ${reading.medianFrameMs.toFixed(1).padStart(6)}ms  ` +
       `p95 ${reading.p95FrameMs.toFixed(1).padStart(6)}ms  ` +
+      `p99 ${reading.p99FrameMs.toFixed(1).padStart(6)}ms  ` +
       `>33 ${String(reading.long33).padStart(4)}  >50 ${String(reading.long50).padStart(4)}  ` +
+      `>100 ${String(reading.long100).padStart(4)}  ` +
+      `upd p95 ${reading.cesium.updateP95Ms.toFixed(1).padStart(6)}  ` +
+      `draw p95 ${reading.cesium.renderP95Ms.toFixed(1).padStart(6)}  ` +
       `cpu ${reading.cpu.total.toFixed(2).padStart(6)}ms ` +
       `(tr ${reading.cpu.train.toFixed(2)} ra ${reading.cpu.rail.toFixed(2)} bu ${reading.cpu.buildings.toFixed(2)})  ` +
       `trains ${String(reading.trains).padStart(3)} (${reading.trainLod})  ` +

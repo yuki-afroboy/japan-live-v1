@@ -34,6 +34,14 @@ test("mobile drawer tabs", async ({ page }) => {
   // The rolling window needs frames before it can report percentiles.
   await page.waitForTimeout(12_000);
   await page.screenshot({ path: "screenshots/m5-tab-performance.png" });
+  // The V1.2 sections live below the fold of a 390x844 phone, and the whole point of
+  // them is that a user can screenshot them into a bug report. Capture the scrolled
+  // state too, or nobody sees whether SESSION and STABILITY actually fit.
+  await page.locator(".right-stack").evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: "screenshots/m7-tab-performance-stability.png" });
 });
 
 /**

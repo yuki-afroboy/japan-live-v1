@@ -24,7 +24,8 @@
     "lint": "npm run typecheck",
     "data:demo": "node scripts/data/build-demo-dataset.mjs",
     "data:gtfs": "node scripts/data/build-gtfs-dataset.mjs",
-    "e2e": "playwright test e2e/smoke.spec.ts e2e/render.spec.ts e2e/live-path.spec.ts e2e/mobile.spec.ts e2e/mobile-diagnostics.spec.ts e2e/buildings.spec.ts e2e/probe-check.spec.ts",
+    "e2e": "playwright test e2e/smoke.spec.ts e2e/render.spec.ts e2e/live-path.spec.ts e2e/mobile.spec.ts e2e/mobile-diagnostics.spec.ts e2e/buildings.spec.ts e2e/probe-check.spec.ts e2e/stability.spec.ts",
+    "e2e:skiplod": "playwright test e2e/skiplod.spec.ts",
     "e2e:capture": "CAPTURE=1 playwright test e2e/screenshots.spec.ts e2e/shot-mobile.spec.ts",
     "data:plateau": "node scripts/data/build-plateau-manifest.mjs",
     "data:testtileset": "node scripts/dev/make-test-tileset.mjs"
