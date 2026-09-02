@@ -212,6 +212,16 @@ export class StabilityMonitor {
   private beat = 0;
   private webgl: WebglInfo;
   private destroyed = false;
+  /**
+   * True once the browser has told us the page is going away.
+   *
+   * Sticky on purpose. Chrome fires visibilitychange around pagehide, and an ordinary
+   * flush from that handler used to write the flag back to false — so a deliberate
+   * reload was recorded as an unexpected restart and the counter reported noise
+   * instead of crashes. The E2E caught it. Nothing that happens after a pagehide can
+   * un-give the notice; only a bfcache restore, which starts the page living again.
+   */
+  private closed = false;
 
   constructor(canvas: HTMLCanvasElement, onContextChange: (lost: boolean) => void = () => {}) {
     this.canvas = canvas;
@@ -262,11 +272,15 @@ export class StabilityMonitor {
   };
 
   private onPageHide = (event: PageTransitionEvent): void => {
+    this.closed = true;
     this.record("pagehide", event.persisted ? "bfcache" : "unload");
-    this.flush(true);
+    this.flush();
   };
 
   private onPageShow = (event: PageTransitionEvent): void => {
+    // Restored from the back/forward cache: this page is alive again, so a kill from
+    // here on is once more a kill.
+    this.closed = false;
     this.record("pageshow", event.persisted ? "from bfcache" : "fresh");
     this.flush();
   };
@@ -312,14 +326,14 @@ export class StabilityMonitor {
     if (this.log.length > LOG_CAPACITY) this.log.splice(0, this.log.length - LOG_CAPACITY);
   }
 
-  private flush(closed = false): void {
-    if (this.destroyed && !closed) return;
+  private flush(): void {
+    if (this.destroyed && !this.closed) return;
     const record: StoredSession = {
       v: 1,
       id: this.sessionId,
       startedAt: Date.now() - (performance.now() - this.startedAt),
       lastBeatAt: Date.now(),
-      closedCleanly: closed,
+      closedCleanly: this.closed,
       navigationType: this.navType,
       state: this.state,
       log: this.log,
