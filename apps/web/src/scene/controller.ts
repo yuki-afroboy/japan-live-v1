@@ -4,11 +4,12 @@ import { LOD } from "@japan-live/shared";
 import type { AppStore } from "../state/app-store.js";
 import { CONFIG } from "../config.js";
 import { createViewer, installBasemap, installTerrain } from "./viewer.js";
-import { BuildingLayer, type BuildingDiagnostics } from "./buildings.js";
+import { BuildingLayer, type BuildingDiagnostics, type TileStats } from "./buildings.js";
 import { installLighting, isNightAt, setSceneTime } from "./lighting.js";
 import { FrameMetrics } from "./perf.js";
 import { currentProfile, type QualityProfile } from "./quality.js";
 import { RailLayer } from "./rail-layer.js";
+import { StabilityMonitor } from "./stability.js";
 import { TrainLayer } from "./train-layer.js";
 import {
   applyFollow,
@@ -57,6 +58,9 @@ export class SceneController {
 
   private handler: Cesium.ScreenSpaceEventHandler;
   private removePreRender: Cesium.Event.RemoveCallback | null = null;
+  private removePreUpdate: Cesium.Event.RemoveCallback | null = null;
+  private removePostUpdate: Cesium.Event.RemoveCallback | null = null;
+  private removePostRender: Cesium.Event.RemoveCallback | null = null;
   private removeCameraChanged: Cesium.Event.RemoveCallback | null = null;
   private removeMoveStart: Cesium.Event.RemoveCallback | null = null;
   private removeMoveEnd: Cesium.Event.RemoveCallback | null = null;
@@ -78,6 +82,23 @@ export class SceneController {
   /** True between camera moveStart and moveEnd — a drag, a pinch or a flight. */
   private cameraMoving = false;
   private lastCameraMoveAt = 0;
+
+  /** Frame-span bookkeeping. Set in preUpdate, read in postRender, same frame. */
+  private updateStartedAt = 0;
+  private updateSpanMs = 0;
+  private ourSpanMs = 0;
+  private ourEndedAt = 0;
+  private readonly stability: StabilityMonitor;
+  private tileStats: TileStats = {
+    pendingRequests: 0,
+    tilesProcessing: 0,
+    settled: 0,
+    tilesets: 0,
+    memoryMb: 0,
+    loaded: 0,
+    unloaded: 0,
+    failed: 0,
+  };
 
   constructor(container: HTMLElement, store: AppStore, callbacks: SceneCallbacks) {
     this.store = store;
@@ -121,7 +142,37 @@ export class SceneController {
       this.lastCameraMoveAt = performance.now();
     });
 
+    // The four scene events bracket one call to Scene.render, in this order:
+    // preUpdate -> [pass updates] -> postUpdate -> preRender -> [draw] -> postRender.
+    // Timing them separately is the only way to tell an update-pass stall (3D Tiles
+    // content parsing and GPU upload, which Cesium runs with no time budget) from a
+    // draw stall. Our own per-layer CPU split cannot see either of them.
+    this.removePreUpdate = this.viewer.scene.preUpdate.addEventListener(() => {
+      this.updateStartedAt = performance.now();
+    });
+    this.removePostUpdate = this.viewer.scene.postUpdate.addEventListener(() => {
+      this.updateSpanMs = performance.now() - this.updateStartedAt;
+    });
     this.removePreRender = this.viewer.scene.preRender.addEventListener(() => this.onFrame());
+    this.removePostRender = this.viewer.scene.postRender.addEventListener(() => {
+      const now = performance.now();
+      this.metrics.spans(
+        now,
+        this.updateSpanMs,
+        this.ourSpanMs,
+        now - this.ourEndedAt,
+        this.tileStats.tilesProcessing,
+        this.tileStats.pendingRequests,
+      );
+    });
+
+    this.stability = new StabilityMonitor(this.viewer.canvas, (lost) => {
+      this.store.setSceneHealth({
+        notes: lost
+          ? { buildings: "WebGL コンテキストが失われました。復帰を待っています。" }
+          : {},
+      });
+    });
 
     // requestRenderMode keeps an idle map from burning a GPU, but MOTION is the whole
     // product: while trains are on screen the scene must be driven every frame.
@@ -164,6 +215,9 @@ export class SceneController {
         devicePixelRatio: window.devicePixelRatio ?? 1,
         viewport: `${window.innerWidth}x${window.innerHeight}`,
         tier: this.profile.tier,
+        tiles: this.buildings.tileStats(),
+        tuning: this.profile.tiles,
+        stability: this.stability.snapshot(),
       });
       w.__profile = this.profile;
     }
@@ -302,6 +356,8 @@ export class SceneController {
       this.buildings.update(altitude, viewCenter(this.viewer));
     }
     const tEnd = performance.now();
+    this.ourSpanMs = tEnd - nowReal;
+    this.ourEndedAt = tEnd;
     this.metrics.cpuFrame(
       tFollowStart - tTrainStart,
       tTrainStart - tRailStart,
@@ -312,6 +368,10 @@ export class SceneController {
     if (nowReal - this.lastStatsAt > 500) {
       this.lastStatsAt = nowReal;
       this.publishBuildingDiagnostics();
+      // Cheap enough at 2 Hz, and it is what the long-frame numbers get correlated
+      // against — a 150 ms frame with 40 tiles in the processing queue is a different
+      // bug from a 150 ms frame with an empty one.
+      this.tileStats = this.buildings.tileStats();
       const fps = this.fpsFrames > 0 ? this.fpsAccum / this.fpsFrames : 0;
       this.fpsAccum = 0;
       this.fpsFrames = 0;
@@ -321,9 +381,38 @@ export class SceneController {
         lod: this.trainLayer.currentLod,
         trains: this.trainLayer.count,
       });
+      this.stability.setState({
+        wards: this.tileStats.tilesets,
+        tilesets: this.tileStats.tilesets,
+        tileMemoryMb: this.tileStats.memoryMb,
+        pendingRequests: this.tileStats.pendingRequests,
+        tilesProcessing: this.tileStats.tilesProcessing,
+        altitude,
+        trains: this.trainLayer.count,
+        fps,
+      });
+
       // Percentiles cost a sort. Only pay for it while the panel is on screen.
       if (this.store.wantsPerformance) {
-        this.store.setPerformance(this.metrics.snapshot(nowReal));
+        const snapshot = this.metrics.snapshot(nowReal);
+        // Diagnostics first: setPerformance is what notifies subscribers, so the panel
+        // must already be able to read a matching diagnostics record when it does.
+        this.store.setDiagnostics({ tiles: this.tileStats, stability: this.stability.snapshot() });
+        this.store.setPerformance(snapshot);
+        // A stall long enough to be felt is worth surviving a reload, so it goes in the
+        // persistent log with its attribution attached. Judged on the whole frame, not
+        // on the spans: a frame that spends 160 ms in the compositor is the one the
+        // user felt, and its visible spans are close to zero.
+        const worst = snapshot.worst;
+        const frameMs = worst ? (worst.frameMs > 0 ? worst.frameMs : worst.totalMs) : 0;
+        if (worst && frameMs > 120) {
+          this.stability.recordStall(
+            frameMs,
+            `upd ${Math.round(worst.updateMs)} app ${Math.round(worst.ourMs)} ` +
+              `draw ${Math.round(worst.renderMs)} other ${Math.round(worst.otherMs)} ` +
+              `proc ${worst.tilesProcessing}`,
+          );
+        }
       }
     }
   }
@@ -489,6 +578,10 @@ export class SceneController {
     this.tour?.cancel();
     window.cancelAnimationFrame(this.animationFrame);
     this.removePreRender?.();
+    this.removePreUpdate?.();
+    this.removePostUpdate?.();
+    this.removePostRender?.();
+    this.stability.destroy();
     this.removeCameraChanged?.();
     this.removeMoveStart?.();
     this.removeMoveEnd?.();

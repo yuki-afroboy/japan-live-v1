@@ -6,6 +6,7 @@ import {
   profileFor,
   resolutionScaleFor,
   tierFor,
+  tileTuningFrom,
 } from "../src/scene/quality.js";
 
 /**
@@ -139,5 +140,63 @@ describe("mobile costs strictly less than desktop everywhere it matters", () => 
     expect(mobile.msaaSamples).toBeLessThan(desktop.msaaSamples);
     expect(mobile.antialias).toBe(false);
     expect(mobile.fxaa).toBe(false);
+  });
+});
+
+/**
+ * 3D Tiles tuning.
+ *
+ * These four settings are the ones the V1.2 investigation actually changed, so they
+ * are locked here: an accidental revert to Cesium's skip-LOD defaults brings back
+ * buildings that paint nothing while their descendants load, and an unbounded request
+ * count brings back the frame that parses forty tiles at once.
+ */
+describe("tile tuning", () => {
+  it("keeps skip-LOD selection on, which is what the A/B supported", () => {
+    // Measured, not assumed: turning it off made the layer paint LESS while tiles were
+    // still arriving, because Cesium then refuses to refine until every child is ready.
+    // See docs/PERFORMANCE.md V1.2 and perf/skiplod/result.json.
+    expect(profileFor(390, 3).tiles.skipLevelOfDetail).toBe(true);
+    expect(profileFor(1280, 2).tiles.skipLevelOfDetail).toBe(true);
+  });
+
+  it("leaves the request scheduler at Cesium's defaults, because nothing measured said otherwise", () => {
+    // Deliberately NOT tuned. A cap looked plausible from the Cesium source and the
+    // CI A/B could not show a benefit, so it stays a knob rather than a decision.
+    // If a device measurement ever justifies a cap, this test is where it lands.
+    const mobile = profileFor(390, 3).tiles;
+    expect(mobile.maximumRequests).toBe(50);
+    expect(mobile.maximumRequestsPerServer).toBe(18);
+  });
+});
+
+describe("tileTuningFrom", () => {
+  const base = profileFor(390, 3).tiles;
+
+  it("changes nothing for a normal load", () => {
+    expect(tileTuningFrom("", base)).toEqual(base);
+    expect(tileTuningFrom("?debug=1", base)).toEqual(base);
+  });
+
+  it("lets a measurement run take the other side of the A/B", () => {
+    const tuned = tileTuningFrom("?sklod=1&leaves=1", base);
+    expect(tuned.skipLevelOfDetail).toBe(true);
+    expect(tuned.preferLeaves).toBe(true);
+    // Untouched parameters keep the shipped value, so an arm differs in one thing only.
+    expect(tuned.maximumRequests).toBe(base.maximumRequests);
+  });
+
+  it("reads 0 as off, not as absent", () => {
+    const on = tileTuningFrom("?dsse=1", base);
+    const off = tileTuningFrom("?dsse=0", base);
+    expect(on.dynamicScreenSpaceError).toBe(true);
+    expect(off.dynamicScreenSpaceError).toBe(false);
+  });
+
+  it("ignores a request count that is not a usable number", () => {
+    expect(tileTuningFrom("?req=abc", base).maximumRequests).toBe(base.maximumRequests);
+    expect(tileTuningFrom("?req=0", base).maximumRequests).toBe(base.maximumRequests);
+    expect(tileTuningFrom("?req=-4", base).maximumRequests).toBe(base.maximumRequests);
+    expect(tileTuningFrom("?req=6", base).maximumRequests).toBe(6);
   });
 });

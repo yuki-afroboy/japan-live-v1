@@ -85,6 +85,34 @@ interface LoadedWard {
   tileset: Cesium.Cesium3DTileset;
   url: string;
   lod: 1 | 2;
+  /** Latest figures from the tileset's own loadProgress event. */
+  pendingRequests: number;
+  tilesProcessing: number;
+  removeProgress: Cesium.Event.RemoveCallback;
+}
+
+/**
+ * What the 3D Tiles streaming pipeline is doing right now.
+ *
+ * Every number here comes from documented Cesium 1.144 public API — the `loadProgress`
+ * event and `totalMemoryUsageInBytes` / `tilesLoaded` properties. `Cesium3DTileset`
+ * also carries a richer `statistics` object, but it is marked private and absent from
+ * the shipped type definitions, so it is deliberately not used: a diagnostic that
+ * breaks on a patch upgrade is worse than one field fewer.
+ */
+export interface TileStats {
+  /** Tile content requests in flight, summed over resident tilesets. */
+  pendingRequests: number;
+  /** Downloaded tiles waiting to be parsed and uploaded to the GPU. */
+  tilesProcessing: number;
+  /** Tilesets reporting tilesLoaded — i.e. settled for the current view. */
+  settled: number;
+  tilesets: number;
+  memoryMb: number;
+  /** Cumulative tile content loaded and unloaded this session. */
+  loaded: number;
+  unloaded: number;
+  failed: number;
 }
 
 const EARTH_R = 6_371_008.8;
@@ -117,10 +145,45 @@ export class BuildingLayer {
   private lastAltitude = 0;
   /** How much geometry and memory this device may spend on buildings. */
   private readonly profile: QualityProfile;
+  private tilesLoadedTotal = 0;
+  private tilesUnloadedTotal = 0;
+  private tilesFailedTotal = 0;
 
   constructor(viewer: Cesium.Viewer, profile: QualityProfile = currentProfile()) {
     this.viewer = viewer;
     this.profile = profile;
+
+    // RequestScheduler is global (a namespace of static fields), so this is set once
+    // from the profile rather than per tileset. It bounds how many tile bodies can
+    // land in the same frame, which is the only handle Cesium gives us on the length
+    // of the unbudgeted processing pass. See docs/PERFORMANCE.md V1.2.
+    Cesium.RequestScheduler.maximumRequests = profile.tiles.maximumRequests;
+    Cesium.RequestScheduler.maximumRequestsPerServer = profile.tiles.maximumRequestsPerServer;
+  }
+
+  /** Live streaming figures for the diagnostics panel. Public API only. */
+  tileStats(): TileStats {
+    let pendingRequests = 0;
+    let tilesProcessing = 0;
+    let settled = 0;
+    let bytes = 0;
+    for (const w of this.loaded.values()) {
+      if (w.tileset.isDestroyed()) continue;
+      pendingRequests += w.pendingRequests;
+      tilesProcessing += w.tilesProcessing;
+      if (w.tileset.tilesLoaded) settled++;
+      bytes += w.tileset.totalMemoryUsageInBytes;
+    }
+    return {
+      pendingRequests,
+      tilesProcessing,
+      settled,
+      tilesets: this.loaded.size,
+      memoryMb: bytes / (1024 * 1024),
+      loaded: this.tilesLoadedTotal,
+      unloaded: this.tilesUnloadedTotal,
+      failed: this.tilesFailedTotal,
+    };
   }
 
   async loadManifest(signal?: AbortSignal): Promise<void> {
@@ -222,6 +285,7 @@ export class BuildingLayer {
       );
       for (const [code, w] of byDistance) {
         if (this.loaded.size <= budget) break;
+        w.removeProgress();
         this.viewer.scene.primitives.remove(w.tileset);
         if (!w.tileset.isDestroyed()) w.tileset.destroy();
         this.loaded.delete(code);
@@ -246,9 +310,9 @@ export class BuildingLayer {
             // caches can exist at once.
             cacheBytes: this.profile.tilesetCacheBytes,
             maximumCacheOverflowBytes: this.profile.tilesetOverflowBytes,
-            skipLevelOfDetail: true,
-            preferLeaves: true,
-            dynamicScreenSpaceError: true,
+            skipLevelOfDetail: this.profile.tiles.skipLevelOfDetail,
+            preferLeaves: this.profile.tiles.preferLeaves,
+            dynamicScreenSpaceError: this.profile.tiles.dynamicScreenSpaceError,
             cullWithChildrenBounds: true,
           });
           if (this.destroyed) {
@@ -270,8 +334,40 @@ export class BuildingLayer {
           this.viewer.scene.primitives.add(tileset);
 
           const previous = this.loaded.get(ward.code);
-          if (previous) this.viewer.scene.primitives.remove(previous.tileset);
-          this.loaded.set(ward.code, { code: ward.code, name: ward.name, tileset, url, lod });
+          if (previous) {
+            previous.removeProgress();
+            this.viewer.scene.primitives.remove(previous.tileset);
+          }
+
+          const entry: LoadedWard = {
+            code: ward.code,
+            name: ward.name,
+            tileset,
+            url,
+            lod,
+            pendingRequests: 0,
+            tilesProcessing: 0,
+            removeProgress: () => undefined,
+          };
+          // loadProgress is the documented way to see the streaming queue depth. It
+          // fires once per frame per tileset while anything is outstanding, and the
+          // two numbers are exactly what a long frame needs to be correlated against.
+          entry.removeProgress = tileset.loadProgress.addEventListener(
+            (pending: number, processing: number) => {
+              entry.pendingRequests = pending;
+              entry.tilesProcessing = processing;
+            },
+          );
+          tileset.tileLoad.addEventListener(() => {
+            this.tilesLoadedTotal++;
+          });
+          tileset.tileUnload.addEventListener(() => {
+            this.tilesUnloadedTotal++;
+          });
+          tileset.tileFailed.addEventListener(() => {
+            this.tilesFailedTotal++;
+          });
+          this.loaded.set(ward.code, entry);
 
           this.attempts.push({
             ward: ward.name,
@@ -369,6 +465,7 @@ export class BuildingLayer {
   destroy(): void {
     this.destroyed = true;
     for (const w of this.loaded.values()) {
+      w.removeProgress();
       this.viewer.scene.primitives.remove(w.tileset);
       if (!w.tileset.isDestroyed()) w.tileset.destroy();
     }

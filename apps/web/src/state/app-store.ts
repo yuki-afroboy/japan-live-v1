@@ -20,6 +20,8 @@ import { CONFIG, IS_DEMO_MODE } from "../config.js";
 import type { SceneHealth } from "../scene/viewer.js";
 import type { BuildingDiagnostics } from "../scene/buildings.js";
 import type { PerfSnapshot } from "../scene/perf.js";
+import type { TileStats } from "../scene/buildings.js";
+import type { StabilitySnapshot } from "../scene/stability.js";
 
 export interface LayerToggles {
   terrain: boolean;
@@ -62,6 +64,12 @@ type Listener = (snapshot: AppSnapshot) => void;
  * React subscribes to snapshots of this; the scene reads `entities` directly each frame.
  * Keeping the two apart is what stops React re-rendering at 60 Hz.
  */
+/** Everything the PERFORMANCE tab shows besides the frame timings themselves. */
+export interface SceneDiagnostics {
+  tiles: TileStats;
+  stability: StabilitySnapshot;
+}
+
 export class AppStore {
   readonly clock = new SimulationClock();
   private readonly registry = new ProviderRegistry();
@@ -92,6 +100,12 @@ export class AppStore {
    * skips computing them entirely when nobody is looking.
    */
   private perf: PerfSnapshot | null = null;
+  /**
+   * Streaming and stability facts, published on the same 2 Hz beat as `perf` and to
+   * the same subscribers, so the diagnostics panel gets one consistent picture rather
+   * than three that were sampled at different moments.
+   */
+  private diagnostics: SceneDiagnostics | null = null;
   private readonly perfListeners = new Set<() => void>();
   private polling = false;
   private lastPollAt = 0;
@@ -300,6 +314,15 @@ export class AppStore {
 
   perfSnapshot(): PerfSnapshot | null {
     return this.perf;
+  }
+
+  diagnosticsSnapshot(): SceneDiagnostics | null {
+    return this.diagnostics;
+  }
+
+  /** Set immediately before setPerformance, which is what notifies. */
+  setDiagnostics(next: SceneDiagnostics): void {
+    this.diagnostics = next;
   }
 
   setPerformance(next: PerfSnapshot): void {
