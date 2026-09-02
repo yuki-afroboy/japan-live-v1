@@ -45,6 +45,48 @@ export interface QualityProfile {
    * but the vehicles has changed.
    */
   animationHz: number;
+  /**
+   * 3D Tiles traversal and streaming options.
+   *
+   * These are in the quality profile rather than hardcoded at the load site because
+   * they are the settings the V1.2 investigation A/B-tested, and an A/B you cannot
+   * re-run is a claim, not a measurement. `tileTuningFrom` lets a measurement run
+   * override them from the URL without touching the shipped defaults.
+   */
+  tiles: TileTuning;
+}
+
+export interface TileTuning {
+  /**
+   * Render descendants before their ancestors have loaded.
+   *
+   * Kept ON, which is where it shipped, because the measurement said so: with the
+   * three-level fixture and half its leaves held back, turning it OFF *reduced* the
+   * pixels the layer painted (27.6% against 41.5%) — Cesium refuses to refine until
+   * every child is ready, so the view sits on the coarsest level for longer.
+   *
+   * It is exposed here because it is the first thing to A/B when buildings look wrong
+   * on a device. While a tileset has mixed content, Cesium gives every not-yet-final
+   * tile an extra depth-only back-face pass (`deriveSkipLodBackfaceCommand`, colour
+   * mask off, polygon offset 5/5) so that resolved tiles cannot be occluded by their
+   * unresolved ancestors. That trick assumes closed solids; on an open or inverted
+   * mesh the "back face" can land in front, and then real surfaces fail the depth
+   * test and leave holes. Our synthetic fixture is closed boxes and cannot exercise
+   * that, so it stays a hypothesis about real data — see docs/PERFORMANCE.md V1.2.
+   */
+  skipLevelOfDetail: boolean;
+  /** Request leaf tiles first. With skipLevelOfDetail, keeps ancestors unresolved. */
+  preferLeaves: boolean;
+  dynamicScreenSpaceError: boolean;
+  /**
+   * Ceiling on simultaneous tile requests, applied to Cesium's global RequestScheduler.
+   *
+   * Cesium parses and uploads every queued tile inside one frame with no time budget
+   * (Cesium3DTileset.prePassesUpdate -> processTiles), so the number of tiles that can
+   * ARRIVE at once is the only lever we have on how long that frame can get.
+   */
+  maximumRequests: number;
+  maximumRequestsPerServer: number;
 }
 
 const DESKTOP: Omit<QualityProfile, "resolutionScale"> = {
@@ -59,6 +101,14 @@ const DESKTOP: Omit<QualityProfile, "resolutionScale"> = {
   midSse: 32,
   // Uncapped: a desktop GPU has the headroom and 60 fps motion is worth having.
   animationHz: 120,
+  tiles: {
+    skipLevelOfDetail: true,
+    preferLeaves: true,
+    dynamicScreenSpaceError: true,
+    // Cesium's own defaults.
+    maximumRequests: 50,
+    maximumRequestsPerServer: 18,
+  },
 };
 
 const MOBILE: Omit<QualityProfile, "resolutionScale"> = {
@@ -83,6 +133,22 @@ const MOBILE: Omit<QualityProfile, "resolutionScale"> = {
   // A city visualisation does not need 60 fps of train motion. 30 Hz reads as smooth
   // and halves the work when the camera is still.
   animationHz: 30,
+  // Every 3D Tiles setting is unchanged from V1.1, on purpose.
+  //
+  // The suspicion going in was that a phone should stream fewer tiles at once, because
+  // Cesium parses and uploads every arrived tile inside one unbudgeted frame. The
+  // measurement did not support changing it: on CI the whole fixture is 2.5 MB over
+  // localhost, so no processing stall occurs to reduce, and capping requests only made
+  // content arrive later. Shipping a cap on that evidence would be guessing with a
+  // number attached. The knob is exposed (`?req=`) so the A/B can be run where the
+  // stall actually happens — see docs/PERFORMANCE.md V1.2.
+  tiles: {
+    skipLevelOfDetail: true,
+    preferLeaves: true,
+    dynamicScreenSpaceError: true,
+    maximumRequests: 50,
+    maximumRequestsPerServer: 18,
+  },
 };
 
 /**
@@ -118,8 +184,39 @@ export function resolutionScaleFor(tier: QualityTier, devicePixelRatio: number):
   return tier === "mobile" ? Math.min(dpr, 1.25) : Math.min(dpr, 1.75);
 }
 
+/**
+ * Measurement-only overrides, read from the query string.
+ *
+ * `?sklod=1&leaves=0&dsse=0&req=6` — used by the A/B sweeps so both arms of a
+ * comparison run the same build. Absent parameters keep the shipped default, so a
+ * normal load is unaffected.
+ */
+export function tileTuningFrom(search: string, base: TileTuning): TileTuning {
+  const params = new URLSearchParams(search);
+  const flag = (name: string, fallback: boolean): boolean => {
+    const raw = params.get(name);
+    if (raw === null) return fallback;
+    return raw === "1" || raw === "true";
+  };
+  const int = (name: string, fallback: number): number => {
+    const raw = params.get(name);
+    if (raw === null) return fallback;
+    const value = Number.parseInt(raw, 10);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  };
+  return {
+    skipLevelOfDetail: flag("sklod", base.skipLevelOfDetail),
+    preferLeaves: flag("leaves", base.preferLeaves),
+    dynamicScreenSpaceError: flag("dsse", base.dynamicScreenSpaceError),
+    maximumRequests: int("req", base.maximumRequests),
+    maximumRequestsPerServer: int("reqserver", base.maximumRequestsPerServer),
+  };
+}
+
 export function currentProfile(): QualityProfile {
   const width = typeof window === "undefined" ? 1_280 : window.innerWidth;
   const dpr = typeof window === "undefined" ? 1 : (window.devicePixelRatio ?? 1);
-  return profileFor(width, dpr);
+  const profile = profileFor(width, dpr);
+  if (typeof window === "undefined") return profile;
+  return { ...profile, tiles: tileTuningFrom(window.location.search, profile.tiles) };
 }
