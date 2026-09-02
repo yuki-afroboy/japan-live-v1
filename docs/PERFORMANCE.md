@@ -235,3 +235,235 @@ Two rules follow from this baseline:
 2. **Frame count is a shared budget, not a per-layer one.** The animation ticker is
    global. When buses and flights join trains, they share the same cadence rather than
    each adding a reason to render.
+
+---
+
+# V1.2 — mobile stability
+
+The V1.1 stabilization shipped and was verified on an iPhone. It did not meet its
+targets, and the device report was specific enough to be worth quoting:
+
+```
+FPS 23.5 · avg 42.5 ms · median 17.0 ms · p95 157.0 ms · worst 183.0 ms
+>33 ms 61/225 · >50 ms 56/225 · render req ~13/s · rAF ~23/s · app CPU 0.13 ms
+rs 1.25 · DPR 3 · MSAA x1 · FXAA OFF · wards 3 · 30 Hz · 402x714
+```
+
+Three separate complaints came with it: the page reloads itself, the frame times are
+bimodal, and the buildings look see-through. They are investigated separately below,
+because nothing about them says they share a cause.
+
+**The first thing that report says is that this is not a slow app.** A median of 17 ms
+is 59 fps. An average of 42.5 ms is an artefact of a long tail, and any change judged on
+the average would be judged on the wrong number. Everything below is about the tail.
+
+## What Cesium 1.144 actually does
+
+Read out of the installed package, not from memory. File references are to
+`node_modules/@cesium/engine/Source`.
+
+**One `Scene.render` call raises four events, in this order** (`Scene/Scene.js`):
+`preUpdate` → pass updates → `postUpdate` → `preRender` → draw →
+`callAfterRenderFunctions` → `postRender`. `preRender` and `postRender` fire only on
+frames that actually render; the update pair fires every time. Timing between them is
+the only way to separate an update stall from a draw stall, and it is what the app now
+does.
+
+**`CesiumWidget` runs its own `requestAnimationFrame` loop and calls `scene.render()` on
+every frame** (`Widget/CesiumWidget.js`), regardless of `requestRenderMode`. Request
+render mode decides whether the *draw* happens; the update passes run either way.
+
+**3D Tiles content is parsed and uploaded in the update pass, with no time budget.**
+`Cesium3DTileset.prototype.prePassesUpdate` calls `processTiles`, which loops over the
+entire processing queue calling `tile.process(...)`. Its only exit is
+`totalMemoryUsageInBytes > cacheBytes + maximumCacheOverflowBytes`
+(`Scene/Cesium3DTileset.js`). So the number of tiles that finish downloading at the same
+moment sets how long a single frame can become, and `RequestScheduler.maximumRequests` /
+`maximumRequestsPerServer` (both public API) are the only handles on it.
+
+**`Cesium3DTileset.statistics` is not public.** It exists at runtime — `processTiles`
+destructures it — but it is absent from the shipped `Cesium.d.ts`, so the diagnostics
+deliberately do not use it. Everything the panel reports comes from documented API:
+the `loadProgress` event (pending requests, tiles processing), `tileLoad` / `tileUnload`
+/ `tileFailed`, `tilesLoaded`, and `totalMemoryUsageInBytes`. No private API is used
+anywhere in this work.
+
+**A theory that was checked and eliminated:** that the mobile profile's
+`scene.msaaSamples = 1` leaves the render target without a stencil buffer, breaking the
+3D Tiles skip-LOD selection that depends on one. It does not. `SceneFramebuffer`
+constructs both of its framebuffer managers with `depthStencil: true` unconditionally
+(`Scene/SceneFramebuffer.js`), and Cesium requests `stencil: true` on the context by
+default (`Renderer/Context.js`). The panel reports the actual stencil bit depth so this
+never has to be assumed again.
+
+## A. The page reloads itself
+
+Not diagnosed. **Made observable**, which is the part that could be done without the
+device.
+
+A tab killed by iOS runs none of our code on the way out, so every fact about it has to
+be written down before it happens. The app now keeps a record in `localStorage`
+(`apps/web/src/scene/stability.ts`): a session id, a 2 s heartbeat, the last known scene
+state, and a ring buffer of events. After a restart the previous record is still there.
+
+The distinction that matters is not the Navigation Timing type — a deliberate
+pull-to-refresh reports `reload` exactly like a crash recovery does. It is whether a
+`pagehide` was ever recorded. A record left behind without one means the page went away
+without the browser giving notice, and that is counted as an **unexpected restart** and
+kept across sessions.
+
+Alongside it: `webglcontextlost` and `webglcontextrestored` are now handled. The handler
+calls `preventDefault()`, which is what allows the browser to restore a context at all —
+without it a lost context is permanent and the map is blank for the rest of the session.
+Nothing in the codebase listened for either event before.
+
+What the 性能 tab now shows, and what to read from it after the next reload:
+
+| Row | What it answers |
+| --- | --- |
+| SESSION / 予期しない再起動 | Did the page die, or did you refresh it? |
+| 前回セッション | How long it survived, and the last event before it ended |
+| 終了時の状態 | Tile memory, tileset count and altitude at the moment it died |
+| STABILITY ログ | `stall`, `hidden`, `webgl-lost`, `error` — in order, with timings |
+| コンテキスト消失 | Whether WebGL was lost, cumulative across sessions |
+
+If `終了時の状態` shows a large tile memory figure, the mobile budget is the first thing
+to cut: three wards at 48 MB + 16 MB overflow each is up to **192 MB of tile memory**,
+which is arithmetic, not a measurement. That change was NOT made here, because cutting a
+budget on arithmetic alone is the guess this phase was supposed to replace.
+
+## B. The long frames
+
+The app now times three parts of every frame and reports the fourth by subtraction:
+
+| Bucket | Covers |
+| --- | --- |
+| `更新` | `preUpdate` → `postUpdate`: globe update, 3D Tiles preload passes, and tile content parse + GPU upload |
+| `アプリ` | our own `preRender` handler: the train, rail, follow and building layer updates |
+| `描画` | end of our handler → `postRender`: draw-command execution and Cesium's after-render callbacks |
+| `その他` | the browser's animation-frame period minus the three above: GPU execution, buffer swap, compositing |
+
+**`その他` is the bucket that turned out to matter**, and it was not in the original
+design. Measured on CI at 390×844 with PLATEAU blocked
+(`screenshots/m5-tab-performance.png`), the worst frame in a 10 s window was
+
+```
+最悪フレーム  157.5 ms
+              更新 0.0 · アプリ 0.40 · 描画 2.3 · その他 154.8 ms
+```
+
+— 98 % of the stall in the bucket that did not exist before this change. In the
+heavy-fixture sweep a 713 ms frame contained 0.2 ms of update and 9.8 ms of draw
+submission. Without the subtraction the panel would have reported a 3 ms frame and
+called it healthy.
+
+The period is measured **rAF to rAF, not render to render**, and that distinction is not
+cosmetic. With `requestRenderMode` and the 30 Hz mobile animation cap, two consecutive
+renders are 33 ms apart on a phone that is doing nothing whatsoever in between;
+subtracting the spans from *that* would invent 30 ms of GPU time on an idle device and
+report a stall that does not exist. The browser's own frame period cannot be inflated
+that way — if it is 157 ms, the browser really did take 157 ms.
+
+This is what makes the device readout actionable, because the two large buckets have
+nothing in common:
+
+- **`その他` dominates** → the frame is GPU / compositor bound. The levers are pixels,
+  overdraw and geometry: resolution scale, MSAA, FXAA, screen-space error, ward count.
+- **`更新` dominates** → 3D Tiles content processing. The levers are how many tiles may
+  arrive at once (`?req=`) and how much is resident.
+- **`アプリ` dominates** → our code. It never has: 0.13 ms on the device, 2.4 ms on a
+  software rasteriser.
+
+### The request-cap A/B, and why nothing shipped from it
+
+The Cesium source above says an unbounded burst of arriving tiles can produce an
+unbounded frame. The obvious change is to cap `RequestScheduler.maximumRequests` on
+mobile. It was measured before being made, over a purpose-built three-level tileset with
+leaf tiles heavy enough to cost something to parse
+(`PERF=1 npx playwright test e2e/stall-isolation.spec.ts`):
+
+| Scenario | median | p95 | update p95 / max | draw p95 / max |
+| --- | --- | --- | --- | --- |
+| req 50 — tile loading | 542.7 | 811.2 | 12.2 / 12.2 | 27.9 / 27.9 |
+| req 50 — settled | 713.5 | 755.9 | 0.2 / 0.2 | 9.8 / 9.8 |
+| req 6 — tile loading | 159.3 | 411.8 | 0.8 / 13.0 | 21.0 / 61.6 |
+| req 6 — settled | 703.3 | 744.7 | 0.3 / 0.3 | 8.8 / 8.8 |
+
+The loading row looks like a large win and is not one: with `req 6` the arm had loaded
+0 MB against the other arm's 7 MB, so it was drawing less, not stalling less. Settled,
+the two arms are the same frame time. And in every arm the update pass stayed under
+13 ms — **there was no processing stall to remove**, because the whole fixture is 2.5 MB
+served from localhost while a real PLATEAU tile is orders of magnitude larger.
+
+So the request cap **was not shipped**. It is exposed as `?req=` and `?reqserver=` so the
+A/B can be run where the stall actually exists. Shipping it on this evidence would have
+been a guess with a number attached to make it look measured.
+
+## C. The see-through buildings
+
+**Not reproduced, and not conclusively explained.** What follows is what was established
+and what remains open, kept separate on purpose.
+
+The starting hypothesis was read out of the Cesium source: `skipLevelOfDetail` draws
+not-yet-final tiles with the colour mask off, so a tileset mid-load contains invisible
+geometry. **That reading was wrong, and the experiment is what caught it.** In
+`Model/ModelDrawCommand.js`, a tile in a mixed-content tileset gets its normal
+stencil-tested colour command *and*, if it is not at final resolution, an **additional**
+depth-only back-face command. The colour mask is off on the extra pass, not on the tile.
+
+The A/B says the same thing (`npx playwright test e2e/skiplod.spec.ts`; both arms at
+390×844, three-level REPLACE fixture, half the leaves held back 30 s, identical fixed
+camera over 西新宿, trains off, measured as building-layer painted pixel coverage):
+
+| Arm | Coverage | Screenshot |
+| --- | --- | --- |
+| `?sklod=1&leaves=1` (shipped) | **41.5 %** | `perf/skiplod/skiplod-on.png` |
+| `?sklod=0&leaves=0` | **27.6 %** | `perf/skiplod/skiplod-off.png` |
+
+Turning skip-LOD off makes the layer paint **less** while tiles are arriving, not more:
+Cesium then refuses to refine until every child of a tile is ready, so the view sits on
+the coarsest level for longer. **So nothing was changed.** Changing a renderer setting
+because a symptom disappeared, when the measurement points the other way, is exactly the
+"it seems fixed now" this phase was told not to produce.
+
+What survives as a hypothesis, narrowed rather than abandoned: that extra back-face pass
+(`deriveSkipLodBackfaceCommand`, polygon offset 5/5) assumes tile geometry is a closed
+solid. PLATEAU LOD1 buildings are extruded footprints and are not reliably closed; on an
+open or inverted mesh the "back face" can land in front of the front face, and then real
+surfaces fail the depth test and leave holes. The fixture here is closed boxes with
+`doubleSided: true`, so it cannot exercise that path, and **this container cannot reach
+PLATEAU at all** — every Japanese data host (`*.plateau.reearth.io`, `*.mlit.go.jp`,
+`*.gsi.go.jp`, `*.odpt.org`) returns HTTP 403 through the egress proxy.
+
+So the A/B moves to the device, which is why the tuning is URL-addressable. At 西新宿 on
+the phone, with the 性能 tab open:
+
+```
+https://<pages-url>/?sklod=1        ← shipped behaviour
+https://<pages-url>/?sklod=0        ← no skip-LOD selection
+https://<pages-url>/?sklod=1&leaves=0
+https://<pages-url>/?dsse=0         ← no dynamic screen-space error
+```
+
+The panel's `3D Tiles` row states which combination is live, and `TILES 配信中` /
+`TILES 常駐` state whether the tileset is still streaming or settled — which separates
+"see-through while loading" from "see-through when finished". Those are different bugs
+and only the second one is a rendering fault.
+
+## What shipped, and what did not
+
+| Change | Evidence |
+| --- | --- |
+| Frame split into update / app / draw / other, with p99 and >100 ms | The device's own numbers were bimodal and unattributable |
+| Whole-frame ranking of the worst frame | A 713 ms frame showed 10 ms of visible work; ranking by spans reported the wrong frame |
+| Persistent session record, heartbeat, unexpected-restart count | A killed tab runs no code; the record has to predate the crash |
+| `webglcontextlost` / `restored` handling with `preventDefault()` | Nothing listened; a lost context was silent and permanent |
+| 3D Tiles streaming counters from public API only | `Cesium3DTileset.statistics` is not in the 1.144 type definitions |
+| Tile tuning exposed as URL parameters | The A/B that matters can only be run on the device |
+| **Not shipped:** mobile request cap | Measured; no stall to remove in this environment |
+| **Not shipped:** `skipLevelOfDetail: false` | Measured; it painted less, not more |
+| **Not shipped:** smaller tile cache / ward budget | Only arithmetic supports it; the record will now say whether memory was the cause |
+
+## Verifying A, B and C on the device
+
+CI cannot pass or fail any of this. The procedure is in `docs/DEVICE-CHECKS.md`.

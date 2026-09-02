@@ -376,3 +376,101 @@ next person trust a number that does not deserve it.
 binds; CI runs at 3–4 fps, so a 30 Hz cap never engages. CI locks the *settings* instead
 (`apps/web/test/quality.test.ts`), and the device reports the *result* through the
 PERFORMANCE panel. A CI frame rate is a regression signal and nothing more.
+
+---
+
+### D-020 — The see-through hypothesis was wrong, and the experiment is what said so
+
+**Context.** iPhone verification of V1.1 reported buildings that look see-through. The
+suspicion was `skipLevelOfDetail`, and the Cesium 1.144 source appeared to confirm it:
+`deriveSkipLodBackfaceCommand` builds a draw command with `colorMask` all-false and the
+comment "Write just backface depth of unresolved tiles so resolved stenciled tiles do
+not appear in front". Read on its own, that says a tile mid-load paints nothing.
+
+**What the code actually does.** In `ModelDrawCommand.pushCommands`, a tile in a
+mixed-content tileset gets its normal stencil-tested **colour** command, and *in
+addition* — only if it is not at final resolution — the depth-only back-face command.
+The colour mask is off on the extra pass, not on the tile. Unresolved tiles are visible.
+
+**What the measurement said.** A three-level REPLACE fixture with half its leaves held
+back for 30 s, one fixed camera over 西新宿, trains off, both arms from the same build:
+skip-LOD **on** painted 41.5 % of the frame, **off** painted 27.6 %. Turning it off makes
+the layer paint *less*, because Cesium then refuses to refine until every child of a tile
+has arrived.
+
+**Decision.** Change nothing. Ship the A/B as URL parameters (`?sklod=`, `?leaves=`,
+`?dsse=`, `?req=`) so it can be run on the device, against real PLATEAU data, which this
+container cannot reach — every Japanese data host returns 403 through the egress proxy.
+
+The narrowed hypothesis is kept rather than dropped: that back-face depth pass assumes
+closed solids, and PLATEAU LOD1 extrusions are not reliably closed. On an open or
+inverted mesh the back face can land in front and real surfaces then fail the depth test.
+The fixture is closed boxes and cannot exercise it.
+
+**The rule this leaves behind: a source reading is a hypothesis, not a finding.** Two
+lines of the same function said opposite things, and only the A/B settled it. Had the
+experiment been skipped, V1.2 would have shipped `skipLevelOfDetail: false` with a
+confident changelog entry and made loading visibly worse.
+
+---
+
+### D-021 — A frame-time split that cannot see the GPU explains nothing
+
+**Context.** The device reported a median of 17 ms against a p95 of 157 ms — a fast app
+with stalls in it. The V1.1 instrumentation timed our own layer updates, which came to
+0.13 ms per frame, so it could account for 0.3 % of a stall and nothing else.
+
+V1.2 added Cesium's own two spans: `preUpdate`→`postUpdate` (the update passes, which is
+where 3D Tiles content is parsed and uploaded) and end-of-our-handler→`postRender` (draw
+submission). That still was not enough.
+
+**What the measurement said.** On CI, a 713 ms frame contained **0.2 ms of update and
+9.8 ms of draw**. At 390×844 with PLATEAU blocked, the worst frame in a window was
+157.5 ms of which **154.8 ms was in neither span** — 98 % of it. Draw *submission* is
+cheap; the GPU work it queues, the buffer swap and compositing all happen after
+`postRender` returns.
+
+**Decision.** Report the remainder explicitly as `その他`, computed as the browser's
+animation-frame period minus the three measured spans, and rank the worst frame by that
+period rather than by the spans. Ranking by visible work reported a busy frame instead of
+a slow one.
+
+The period is rAF to rAF, deliberately not render to render. `requestRenderMode` plus the
+30 Hz mobile cap puts 33 ms between consecutive renders on a device that is idle in
+between; subtracting spans from that interval would have manufactured 30 ms of phantom
+GPU time and reported a stall on a phone doing nothing.
+
+That bucket is what makes the panel actionable: `その他` dominant means pixels and
+geometry, `更新` dominant means tile streaming, and those two have no fix in common.
+
+**The rule this leaves behind: an instrument that cannot account for the whole interval
+will confidently attribute a stall to whichever part it happens to watch.** Always
+subtract from the wall clock and show what is left over.
+
+---
+
+### D-022 — The crash has to be written down before it happens
+
+**Context.** The page restarts itself on the device. A tab killed by iOS runs no
+JavaScript on the way out — no `pagehide`, no `unload`, no exception — so there is
+nothing to catch and nothing to log at the time.
+
+**Decision.** Keep a record in `localStorage` that the *next* page load reads: session
+id, a 2 s heartbeat, the last known scene state (tile memory, tileset count, altitude),
+and a ring buffer of events. Uptime comes from the heartbeat, so it survives a kill.
+
+The signal is **not** the Navigation Timing type. A deliberate pull-to-refresh reports
+`reload` exactly as a crash recovery does. What separates them is whether a `pagehide`
+was ever recorded: a record left behind without one means the page went away without the
+browser giving notice, and only that is counted as an unexpected restart.
+
+Also added, because nothing in the codebase listened for it: `webglcontextlost` /
+`webglcontextrestored`, with `preventDefault()` on the loss. Without that call the
+context can never be restored and the map stays blank for the rest of the session — a
+failure that, until now, produced no log line, no counter and no UI.
+
+**What was deliberately not done.** The mobile tile budget is up to 192 MB (three wards
+× 48 MB + 16 MB overflow). That is arithmetic, and cutting it would be a plausible fix
+for a memory kill. It was left alone: the record now captures tile memory at the moment
+of death, so the next occurrence will say whether memory was the cause instead of
+leaving a quality reduction shipped on a guess.
