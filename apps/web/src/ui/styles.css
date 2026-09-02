@@ -167,6 +167,21 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: var(--panel-border);
 }
 
+/* The stability log is a record, not a table: one line per event, oldest at the
+   bottom, and it must stay readable in a phone screenshot sent as a bug report. */
+.stability-log {
+  list-style: none; margin: 4px 0 0; padding: 0;
+  font-size: 10px; line-height: 1.5; color: var(--text-dim);
+}
+.stability-log li {
+  display: flex; gap: 6px; align-items: baseline;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  padding: 2px 0;
+}
+.stability-t { flex: 0 0 42px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.stability-kind { flex: 0 0 84px; color: var(--text); font-weight: 600; }
+.stability-detail { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+
 .panel-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 9px 12px;
