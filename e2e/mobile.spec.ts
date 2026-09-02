@@ -48,7 +48,11 @@ test("the panels open and close on demand", async ({ page }) => {
 
   await toggle.click();
   await expect(page.locator(".right-stack")).toBeVisible();
-  await expect(page.locator('section[aria-label="データ状態"]')).toBeVisible();
+  // The drawer opens on LAYERS with a tab per panel. It used to open onto all three
+  // panels stacked, which is exactly what made the ones below unreachable (D-018);
+  // DATA STATUS is now one tap away rather than one long scroll away.
+  await expect(page.locator('section[aria-label="レイヤー"]')).toBeVisible();
+  await expect(page.getByRole("tab", { name: "データ" })).toBeVisible();
 
   await toggle.click();
   await expect(page.locator(".right-stack")).toBeHidden();

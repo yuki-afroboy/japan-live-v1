@@ -303,3 +303,76 @@ scroll starting inside LAYERS did not move the drawer; the panel trapped it".
 **Known limitation.** `scrollIntoViewIfNeeded()` can drive an inner scroller
 programmatically where a finger cannot, so the reachability assertions alone pass on the
 old code too. The structural and gesture assertions are the ones that discriminate.
+
+---
+
+### D-018 — A wheel event is not a finger
+
+**Context.** D-017 removed the nested scrollers so the mobile drawer was the single
+scroll container, and proved it with an E2E that drove `page.mouse.wheel` from inside
+the LAYERS body: the test failed on the old code with "the panel trapped it" and passed
+on the new. On a real iPhone the diagnostics were still unreachable.
+
+**Root cause.** `.hud > *` sets `pointer-events: none` on every grid cell so empty
+strips do not steal map drags, and only `.panel`, `button`, `input` and `a` get it back.
+`.right-stack` — the scroll container itself — was never in that list. iOS Safari picks
+a pan's scroll container by hit-testing, found a `.panel` that no longer scrolled
+(D-017 had just removed its `overflow`), and gave the gesture to the map. Chromium's
+synthetic wheel event takes a different path entirely: it walks the containing-block
+chain from the element under the cursor and does not care that an ancestor opted out of
+hit-testing. The test could not have caught this.
+
+**Decision.** Two things, and the second is the one that matters.
+
+`.right-stack[data-open="true"]` gets `pointer-events: auto` on mobile — the narrow fix.
+
+And the structure stops depending on a gesture at all: on a phone the drawer is a **tab
+strip**, one panel at a time, every panel two taps from the map. `100vh` also became
+`100dvh`, because iOS resolves `vh` against the large viewport and a `vh`-sized box hangs
+below what you can see.
+
+**The rule this leaves behind: do not prove a touch-scrolling fix with a wheel event.**
+Playwright can drive a scroller that a finger cannot reach. Where a gesture is
+unavoidable, assert the CSS property that decides whether the gesture can land — which
+is what the pointer-events test now does — and prefer a structure that needs no gesture.
+
+---
+
+### D-019 — Measure first: our JavaScript was 0.2% of the frame
+
+**Context.** The app felt heavy on an iPhone, and the obvious suspects were the train
+loop (several hundred vehicles updated per frame, with a CSS colour string parsed twice
+per vehicle) and PLATEAU buildings.
+
+**What the measurement said.** Per-layer CPU timing inside the frame loop, over 8
+scenarios: the whole train layer costs about **0.55 ms** and the building update about
+**0.1 ms**, inside a frame taking **300 ms**. Subtracting the entire buildings layer
+moved the frame by 9%. Rail and stations were inside the noise.
+
+And the finding that redirected the work: with Trains off, the app rendered **one frame
+in twelve seconds**. Every continuously rendered frame comes from the animation ticker.
+
+**Decision.** Optimise pixels and cadence, not code.
+
+- Mobile `resolutionScale` 1.75 → 1.25. Cost is quadratic, so this is a 49% cut.
+- Mobile MSAA off — and note *which* MSAA. Turning off the WebGL context `antialias`
+  flag moved the frame by ~2%, because Cesium 1.144 renders into its own target, not
+  the default framebuffer. `scene.msaaSamples` (default 4) plus the FXAA post-process
+  stage are the settings that cost fragments. The first pass would have shipped a
+  changelog line claiming antialiasing was disabled while 4× MSAA kept running.
+- Train-only render cadence capped at 30 Hz on mobile, bypassed entirely while the
+  camera is moving, following, or flying.
+- `preserveDrawingBuffer` was removed as dead code and then put back. It is not dead:
+  `render.spec.ts` samples the canvas to catch a black globe, and two render tests went
+  red. Production never sets `?debug`, so it costs a user nothing. Its removal had also
+  inflated the first "after" sweep, which ran under `?debug` with the flag off against
+  a baseline that had it on; the published numbers are the re-measurement.
+
+The train-loop colour caching was kept, but it is filed as **V2 scalability**, not as a
+V1 performance fix, because 0.5 ms of 300 is not a fix. Saying otherwise would make the
+next person trust a number that does not deserve it.
+
+**Two of these cannot be measured in CI.** Headless dpr is 1, so the resolution cap never
+binds; CI runs at 3–4 fps, so a 30 Hz cap never engages. CI locks the *settings* instead
+(`apps/web/test/quality.test.ts`), and the device reports the *result* through the
+PERFORMANCE panel. A CI frame rate is a regression signal and nothing more.

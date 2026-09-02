@@ -19,6 +19,7 @@ import {
 import { CONFIG, IS_DEMO_MODE } from "../config.js";
 import type { SceneHealth } from "../scene/viewer.js";
 import type { BuildingDiagnostics } from "../scene/buildings.js";
+import type { PerfSnapshot } from "../scene/perf.js";
 
 export interface LayerToggles {
   terrain: boolean;
@@ -82,6 +83,16 @@ export class AppStore {
     notes: {},
   };
   private buildingDiagnostics?: BuildingDiagnostics;
+  /**
+   * Frame metrics live OUTSIDE the main snapshot, with their own subscribers.
+   *
+   * They change twice a second by nature. Putting them in the app snapshot would
+   * re-render the whole tree at 2 Hz forever, which is a strange way to build a
+   * performance feature. Only the panel that displays them subscribes, and the scene
+   * skips computing them entirely when nobody is looking.
+   */
+  private perf: PerfSnapshot | null = null;
+  private readonly perfListeners = new Set<() => void>();
   private polling = false;
   private lastPollAt = 0;
   /**
@@ -275,6 +286,27 @@ export class AppStore {
     this.emit();
   }
 
+  subscribePerf(listener: () => void): () => void {
+    this.perfListeners.add(listener);
+    return () => {
+      this.perfListeners.delete(listener);
+    };
+  }
+
+  /** The scene asks this before doing any percentile work. */
+  get wantsPerformance(): boolean {
+    return this.perfListeners.size > 0;
+  }
+
+  perfSnapshot(): PerfSnapshot | null {
+    return this.perf;
+  }
+
+  setPerformance(next: PerfSnapshot): void {
+    this.perf = next;
+    for (const listener of this.perfListeners) listener();
+  }
+
   /**
    * Building state arrives ~2x/second while tiles stream. Only re-notify React when
    * something a human would notice actually changed, or the panel would drive a
@@ -290,7 +322,9 @@ export class AppStore {
       prev.visible !== next.visible ||
       prev.lod !== next.lod ||
       prev.lastError !== next.lastError ||
-      Math.abs(prev.cameraAltitude - next.cameraAltitude) > 25;
+      // Relative, not absolute: 25 m is noise at 400 km and the whole story at 600 m.
+      // An absolute threshold re-rendered the tree on almost every camera event.
+      Math.abs(prev.cameraAltitude - next.cameraAltitude) > Math.max(25, next.cameraAltitude * 0.08);
     this.buildingDiagnostics = next;
     if (changed) this.emit();
   }

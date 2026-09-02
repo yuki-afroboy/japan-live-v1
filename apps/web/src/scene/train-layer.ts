@@ -21,6 +21,32 @@ interface TrainRecord {
   point: Cesium.PointPrimitive;
   billboard: Cesium.Billboard;
   lastSeen: number;
+  /**
+   * Colours parsed once per entity, not once per entity per frame.
+   *
+   * `Color.fromCssColorString` parses a string and allocates; at two calls per train
+   * per frame that was ~700 parses per frame at V1's scale. Measured, it cost about
+   * 0.5 ms of a 300 ms frame — irrelevant today, and the reason this is a V2
+   * scalability change rather than a V1 fix: the cost is linear in entity count, and
+   * V2 adds buses, flights and ferries to the same loop.
+   */
+  lineColor: Cesium.Color;
+  lineColorDim: Cesium.Color;
+  modeColor: Cesium.Color;
+  /** Last image assigned, so an unchanged billboard skips the setter entirely. */
+  iconKey?: string;
+}
+
+/** Reused every frame. Cesium's position setters clone, so one instance is enough. */
+const SCRATCH_POSITION = new Cesium.Cartesian3();
+
+function colorsFor(entity: MobilityEntity): Pick<TrainRecord, "lineColor" | "lineColorDim" | "modeColor"> {
+  const line = Cesium.Color.fromCssColorString(entity.details?.lineColor ?? "#7fd1ff");
+  return {
+    lineColor: line.withAlpha(0.95),
+    lineColorDim: line.withAlpha(0.78),
+    modeColor: Cesium.Color.fromCssColorString(dataModeColor(entity.dataMode)).withAlpha(0.9),
+  };
 }
 
 /**
@@ -149,7 +175,12 @@ export class TrainLayer {
 
       const existing = this.records.get(entity.id);
       if (existing) {
+        // Re-parse only when the thing the colour is derived from actually changed.
+        const recolour =
+          existing.entity.details?.lineColor !== entity.details?.lineColor ||
+          existing.entity.dataMode !== entity.dataMode;
         existing.entity = entity;
+        if (recolour) Object.assign(existing, colorsFor(entity));
         existing.smoothed = retarget(existing.smoothed, target, heading, now);
         existing.lastSeen = now;
       } else {
@@ -159,6 +190,7 @@ export class TrainLayer {
           point: this.points.add({ position: Cesium.Cartesian3.ZERO, pixelSize: 5, show: false }),
           billboard: this.billboards.add({ position: Cesium.Cartesian3.ZERO, show: false }),
           lastSeen: now,
+          ...colorsFor(entity),
         });
       }
     }
@@ -200,15 +232,24 @@ export class TrainLayer {
     for (const record of this.records.values()) {
       const { position, heading } = sample(record.smoothed, now);
       const height = this.heightFor(record.entity);
-      const cartesian = Cesium.Cartesian3.fromDegrees(position[0], position[1], height);
+      // Into the scratch: both collections clone on assignment, and only the 3D-car
+      // shortlist below keeps a reference past this iteration.
+      const cartesian = Cesium.Cartesian3.fromDegrees(
+        position[0],
+        position[1],
+        height,
+        undefined,
+        SCRATCH_POSITION,
+      );
 
       const emphasized =
         record.entity.id === options.selectedId || record.entity.id === options.followId;
-      const lineColor = record.entity.details?.lineColor ?? "#7fd1ff";
 
       if (lod === "model") {
         const distance = Cesium.Cartesian3.distance(cameraPos, cartesian);
-        if (distance < CAR_3D_RANGE) near.push({ record, distance, cartesian });
+        if (distance < CAR_3D_RANGE) {
+          near.push({ record, distance, cartesian: Cesium.Cartesian3.clone(cartesian) });
+        }
       }
 
       if (lod === "point") {
@@ -218,12 +259,8 @@ export class TrainLayer {
         // Colour by line so the network's structure is visible at range; the data
         // mode is carried by the outline, and never by colour alone.
         const underground = record.entity.details?.underground ?? false;
-        p.color = Cesium.Color.fromCssColorString(lineColor).withAlpha(
-          underground && !this.xray ? 0.78 : 0.95,
-        );
-        p.outlineColor = Cesium.Color.fromCssColorString(
-          dataModeColor(record.entity.dataMode),
-        ).withAlpha(0.9);
+        p.color = underground && !this.xray ? record.lineColorDim : record.lineColor;
+        p.outlineColor = record.modeColor;
         p.outlineWidth = isRealtimePosition(record.entity.dataMode) ? 2 : 1;
         p.pixelSize = emphasized ? 11 : altitude > 120_000 ? 3.5 : 5.5;
         record.billboard.show = false;
@@ -231,7 +268,14 @@ export class TrainLayer {
         const b = record.billboard;
         b.position = cartesian;
         b.show = true;
-        b.image = trainIcon(lineColor, emphasized);
+        // The icon is a data: URL kilobytes long. Cesium's setter compares it against
+        // the current one, so re-assigning an unchanged icon costs a string compare
+        // per train per frame for nothing. Track what we set instead.
+        const iconKey = `${record.entity.details?.lineColor ?? "#7fd1ff"}:${emphasized}`;
+        if (record.iconKey !== iconKey) {
+          b.image = trainIcon(record.entity.details?.lineColor ?? "#7fd1ff", emphasized);
+          record.iconKey = iconKey;
+        }
         b.rotation = Cesium.Math.toRadians(-heading);
         b.alignedAxis = Cesium.Cartesian3.ZERO;
         b.scale = emphasized ? 1.15 : lod === "model" ? 0.95 : 0.7;
@@ -281,9 +325,7 @@ export class TrainLayer {
 
       const emphasized =
         record.entity.id === options.selectedId || record.entity.id === options.followId;
-      const color = Cesium.Color.fromCssColorString(
-        record.entity.details?.lineColor ?? "#7fd1ff",
-      );
+      const color = record.lineColor;
       try {
         const attributes = slot.primitive.getGeometryInstanceAttributes({
           kind: "train-car",

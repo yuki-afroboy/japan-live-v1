@@ -65,6 +65,8 @@ export function BuildingDiagnosticsPanel({ diagnostics }: Props) {
             {d.wardsLoaded} / {d.wardsTotal} 区
             {d.wardsFailed > 0 && <span className="diag-bad"> （失敗 {d.wardsFailed}）</span>}
           </dd>
+          <dt>読込済区</dt>
+          <dd>{d.loadedWardNames.length > 0 ? d.loadedWardNames.join("・") : "なし"}</dd>
           <dt>タイルセット</dt><dd>{d.tilesetsLoaded}</dd>
           <dt>表示</dt>
           <dd className={d.visible ? "diag-good" : "diag-bad"}>{d.visible ? "YES" : "NO"}</dd>
@@ -72,12 +74,6 @@ export function BuildingDiagnosticsPanel({ diagnostics }: Props) {
           <dt>LOD</dt><dd>{d.lod}</dd>
           <dt>データ年度</dt><dd>{d.dataYears}</dd>
         </dl>
-
-        {d.loadedWardNames.length > 0 && (
-          <div className="data-sub" style={{ marginTop: 5 }}>
-            {d.loadedWardNames.join("・")}
-          </div>
-        )}
 
         {!d.visible && d.status === "IDLE" && d.cameraAltitude > 12_000 && (
           <div className="diag-hint">

@@ -54,3 +54,20 @@ without an official source ships as `SIMULATED` / `ESTIMATED` / `HISTORICAL`.
 Buses · aircraft · ships · people flow · cars · advanced weather · disasters · the
 national rail network · every private railway · photorealistic train models.
 Only the architecture that keeps them possible.
+
+## The performance contract every future layer inherits
+
+Measured in V1.1 (`docs/PERFORMANCE.md`), and binding on Bus, Flight, Ferry, Weather,
+Traffic and People when they arrive:
+
+1. **Detail is a function of camera scale, not of layer.** Nation → aggregate or heatmap.
+   City → points and clusters. Street → individual objects, with 3D models only for the
+   nearest handful. Trains already do this; nothing new may skip it.
+2. **No layer updates every object at full fidelity every frame.** The frame budget is
+   shared across all layers, so per-object work has to fall off with distance.
+3. **Frame count is one global budget.** The animation ticker is shared. A new moving
+   layer joins the existing cadence; it does not add a second reason to render.
+4. **Every layer reports its own CPU cost per frame** through the PERFORMANCE panel, so
+   the next bottleneck is attributed rather than guessed at.
+5. **Quality settings live in one profile** (`apps/web/src/scene/quality.ts`) with tests
+   on them, not scattered as literals across the scene code.

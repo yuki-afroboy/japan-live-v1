@@ -42,3 +42,6 @@ test-results/
 playwright-report/
 apps/web/dist/
 apps/gateway/dist/
+
+# Performance sweep output (regenerate with PERF=1; the committed record is docs/PERFORMANCE.md)
+perf/

@@ -1,212 +1,219 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { blockPlateau } from "./helpers.js";
 
 /**
- * Can someone actually READ the building diagnostics on an iPhone?
+ * Can someone actually REACH the diagnostics on an iPhone?
  *
- * V1.1 shipped a diagnostics panel that was unreachable on a phone: the drawer
- * scrolled, and each panel body scrolled inside it, so a finger drag in LAYERS moved
- * only LAYERS and never reached PLATEAU BUILDINGS or DATA STATUS behind it. The panel
- * existed in the DOM the whole time, which is exactly why "it renders" is not the same
- * as "a user can use it".
+ * Two attempts failed before this one, and the second failure is the interesting one.
  *
- * So these assert visibility and actionability at an iPhone viewport, never presence.
+ * V1.1 stacked LAYERS, PLATEAU BUILDINGS and DATA STATUS in a drawer where every panel
+ * body was its own scroller. PR #4 removed the inner scrollers so the drawer was the
+ * single scroll container, added a test that drove a scroll with `page.mouse.wheel`
+ * from inside the LAYERS body, showed that test failing on the old code and passing on
+ * the new — and on a real iPhone the diagnostics were still unreachable.
+ *
+ * WHY THE TEST LIED. `.hud > *` sets `pointer-events: none` on every grid cell, with
+ * only .panel/button/input getting it back, so the drawer itself did not accept
+ * pointer events. iOS Safari picks a pan's scroll container by hit-testing, found a
+ * .panel that no longer scrolled, and handed the gesture to the map. Chromium's
+ * synthetic wheel event takes a different path: it walks the containing-block chain
+ * from the element under the cursor and does not care that an ancestor opted out of
+ * hit-testing. A wheel event is not a finger.
+ *
+ * The lesson kept here: DO NOT prove a touch-scrolling fix with a wheel event. The
+ * structure is what these tests assert now — a tab strip, one panel at a time, every
+ * panel two taps from the map with no scrolling required at all — plus the specific
+ * CSS property whose absence caused the second failure.
  */
 
-// iPhone 14 / 15 logical resolution. 375px (SE, mini) is checked separately below.
-// hasTouch so a scroll can be driven the way a finger drives it, not only by script.
-test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+const PHONES = [
+  { name: "iPhone 14/15 (390x844)", width: 390, height: 844 },
+  { name: "iPhone SE/mini (375x667)", width: 375, height: 667 },
+];
 
-test.beforeEach(async ({ page }) => blockPlateau(page));
-
-// `query` is only ever used to add ?debug=1, which exposes window.__viewer. It changes
-// no layout, so the UI assertions below still describe what a normal visitor gets.
-async function boot(page: Page, query = "") {
-  await page.goto(`/${query}`);
+async function boot(page: Page): Promise<void> {
+  await blockPlateau(page);
+  await page.goto("/");
   await page.waitForSelector(".cesium-widget canvas", { timeout: 45_000 });
   await page.waitForTimeout(5_000);
 }
 
-async function openDrawer(page: Page) {
-  await page.locator(".panels-toggle").click();
+/** Open the drawer the way a finger does, not with a synthetic click. */
+async function tap(page: Page, target: Locator): Promise<void> {
+  await expect(target).toBeVisible();
+  await expect(target).toBeInViewport();
+  const box = await target.boundingBox();
+  if (!box) throw new Error("no box to tap");
+  await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+}
+
+async function openDrawer(page: Page): Promise<void> {
+  await tap(page, page.locator(".panels-toggle"));
   await expect(page.locator(".right-stack")).toBeVisible();
 }
 
-test("A. the layers/data drawer opens", async ({ page }) => {
-  await boot(page);
-  await expect(page.locator(".right-stack")).toBeHidden();
-  await openDrawer(page);
-  await expect(page.locator('section[aria-label="レイヤー"]')).toBeVisible();
-});
+function tabButton(page: Page, name: string): Locator {
+  return page.getByRole("tab", { name });
+}
 
-test("B. PLATEAU BUILDINGS can be scrolled to and read", async ({ page }) => {
-  await boot(page);
-  await openDrawer(page);
+for (const phone of PHONES) {
+  test.describe(phone.name, () => {
+    test.use({ viewport: { width: phone.width, height: phone.height }, hasTouch: true });
 
-  const buildings = page.locator('section[aria-label="3D建物"]');
-  // scrollIntoViewIfNeeded fails if an ancestor cannot actually bring it into view.
-  await buildings.scrollIntoViewIfNeeded();
-  await expect(buildings).toBeInViewport();
-  await expect(buildings.getByText("PLATEAU BUILDINGS")).toBeVisible();
-});
+    test("1-2. the drawer opens and every panel has a visible, tappable tab", async ({ page }) => {
+      await boot(page);
+      await expect(page.locator(".right-stack")).toBeHidden();
+      await openDrawer(page);
 
-test("C. every diagnostic field is legible, and the log opens", async ({ page }) => {
-  await boot(page);
-  await openDrawer(page);
+      // All four tabs, on screen at once, at the narrowest phone we support.
+      for (const name of ["レイヤー", "3D建物", "データ", "性能"]) {
+        const tab = tabButton(page, name);
+        await expect(tab, `tab ${name} is missing`).toBeVisible();
+        await expect(tab, `tab ${name} is off screen`).toBeInViewport();
+        const box = await tab.boundingBox();
+        // A tap target under ~30px high is a coin toss with a thumb.
+        expect(box!.height, `tab ${name} is only ${box!.height}px tall`).toBeGreaterThan(30);
+      }
 
-  const buildings = page.locator('section[aria-label="3D建物"]');
-  await buildings.scrollIntoViewIfNeeded();
+      await expect(tabButton(page, "レイヤー")).toHaveAttribute("aria-selected", "true");
+    });
 
-  // The fields someone needs to diagnose missing buildings.
-  for (const label of ["状態", "取得元", "読込済", "表示", "カメラ高度", "LOD"]) {
-    await expect(buildings.getByText(label, { exact: true })).toBeVisible();
-  }
+    test("3-5. the 3D建物 tab reaches the diagnostics in one tap", async ({ page }) => {
+      await boot(page);
+      await openDrawer(page); // tap 1
 
-  // STATUS chip, and the expandable developer log with failed URLs behind it.
-  await expect(buildings.locator(".status-chip")).toBeVisible();
-  const log = buildings.getByRole("button", { name: /詳細ログ/ });
-  if (await log.count()) {
-    await log.scrollIntoViewIfNeeded();
-    await expect(log).toBeVisible();
-    await log.click();
-    await expect(buildings.locator(".diag-log")).toBeVisible();
-  }
-});
+      await tap(page, tabButton(page, "3D建物")); // tap 2 — and that is the whole journey
+      await expect(tabButton(page, "3D建物")).toHaveAttribute("aria-selected", "true");
 
-test("D. DATA STATUS can be scrolled to, below the diagnostics", async ({ page }) => {
-  await boot(page);
-  await openDrawer(page);
+      const panel = page.locator('section[aria-label="3D建物"]');
+      await expect(panel).toBeVisible();
+      await expect(panel).toBeInViewport();
+      await expect(panel.getByText("PLATEAU BUILDINGS")).toBeVisible();
+      await expect(panel.locator(".status-chip")).toBeVisible();
 
-  const data = page.locator('section[aria-label="データ状態"]');
-  await data.scrollIntoViewIfNeeded();
-  await expect(data).toBeInViewport();
-  await expect(data.getByText("DEMO (模擬データ)")).toBeVisible();
-});
+      // 4. The fields that answer "why are there no buildings?".
+      for (const label of [
+        "状態",
+        "取得元",
+        "読込済",
+        "読込済区",
+        "タイルセット",
+        "表示",
+        "カメラ高度",
+        "LOD",
+        "データ年度",
+      ]) {
+        await expect(
+          panel.getByText(label, { exact: true }),
+          `diagnostic field ${label} is not readable`,
+        ).toBeVisible();
+      }
 
-test("the drawer is a single scroll container, not nested scrollers", async ({ page }) => {
-  await boot(page);
-  await openDrawer(page);
+      // The other panels are gone, not merely pushed below the fold.
+      await expect(page.locator('section[aria-label="レイヤー"]')).toBeHidden();
+      await expect(page.locator('section[aria-label="データ状態"]')).toBeHidden();
 
-  const nested = await page.locator(".right-stack .panel-body").evaluateAll((els) =>
-    els
-      .filter((el) => {
-        const style = getComputedStyle(el);
-        const scrolls = style.overflowY === "auto" || style.overflowY === "scroll";
-        return scrolls && el.scrollHeight > el.clientHeight + 1;
-      })
-      .map((el) => el.closest("section")?.getAttribute("aria-label") ?? "?"),
-  );
-  // An inner scroller here swallows the touch gesture on iOS and strands the panels
-  // behind it — the exact bug this file exists for.
-  expect(nested, `panel bodies still scroll independently: ${nested.join(", ")}`).toEqual([]);
-});
+      // 5. The developer log, with the failed URLs behind it.
+      const log = panel.getByRole("button", { name: /詳細ログ/ });
+      if (await log.count()) {
+        await tap(page, log);
+        await expect(panel.locator(".diag-log")).toBeVisible();
+      }
+    });
 
-test("a scroll gesture started inside LAYERS moves the drawer, not just LAYERS", async ({
-  page,
-}) => {
-  await boot(page);
-  await openDrawer(page);
+    test("6-7. データ and back to レイヤー, one tap each", async ({ page }) => {
+      await boot(page);
+      await openDrawer(page);
 
-  const before = await page.locator(".right-stack").evaluate((el) => el.scrollTop);
+      await tap(page, tabButton(page, "データ"));
+      const data = page.locator('section[aria-label="データ状態"]');
+      await expect(data).toBeVisible();
+      await expect(data).toBeInViewport();
+      await expect(data.getByText("DEMO (模擬データ)")).toBeVisible();
 
-  // Put the pointer over the LAYERS body and scroll from there. This is the gesture
-  // that failed on the device: with an inner scroller, the panel consumes the drag and
-  // the drawer never moves, so PLATEAU BUILDINGS behind it stays out of reach.
-  const layersBody = page.locator('section[aria-label="レイヤー"] .panel-body');
-  const box = (await layersBody.boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.wheel(0, 500);
-  await page.waitForTimeout(700);
+      await tap(page, tabButton(page, "レイヤー"));
+      const layers = page.locator('section[aria-label="レイヤー"]');
+      await expect(layers).toBeVisible();
+      await expect(layers).toBeInViewport();
+      await expect(page.locator('section[aria-label="データ状態"]')).toBeHidden();
+    });
 
-  const after = await page.locator(".right-stack").evaluate((el) => el.scrollTop);
-  expect(
-    after,
-    "a scroll starting inside LAYERS did not move the drawer; the panel trapped it",
-  ).toBeGreaterThan(before);
-});
+    test("the PERFORMANCE tab reports real frame timings", async ({ page }) => {
+      await boot(page);
+      await openDrawer(page);
+      await tap(page, tabButton(page, "性能"));
 
-test("scrolling the drawer to the bottom reaches DATA STATUS", async ({ page }) => {
-  await boot(page);
-  await openDrawer(page);
+      const panel = page.locator('section[aria-label="パフォーマンス"]');
+      await expect(panel).toBeVisible();
+      await expect(panel).toBeInViewport();
 
-  await page.locator(".right-stack").evaluate((el) => {
-    el.scrollTop = el.scrollHeight;
+      // It must produce numbers, not just a heading. Frames accumulate as the scene
+      // runs, so give the rolling window a moment to fill.
+      await expect(panel.getByText("FPS", { exact: true })).toBeVisible({ timeout: 20_000 });
+      for (const label of ["平均フレーム", "中央値", "p95", "解像度倍率", "品質プロファイル"]) {
+        await expect(panel.getByText(label, { exact: true })).toBeVisible();
+      }
+
+      const fps = await panel.locator("dd").first().innerText();
+      expect(Number.parseFloat(fps), `FPS read back as "${fps}"`).toBeGreaterThan(0);
+    });
+
+    test("no panel needs scrolling to be reached", async ({ page }) => {
+      await boot(page);
+      await openDrawer(page);
+
+      // The bug this file exists for was a panel that could only be reached by a
+      // gesture. With a tab per panel, the drawer's own scroll position must never be
+      // what decides whether a panel is on screen.
+      for (const [tabName, label] of [
+        ["3D建物", "3D建物"],
+        ["データ", "データ状態"],
+        ["レイヤー", "レイヤー"],
+      ] as const) {
+        await tap(page, tabButton(page, tabName));
+        await page.locator(".right-stack").evaluate((el) => {
+          el.scrollTop = 0;
+        });
+        await expect(
+          page.locator(`section[aria-label="${label}"]`),
+          `${tabName} needed scrolling to come into view`,
+        ).toBeInViewport();
+      }
+    });
+
+    test("the open drawer accepts pointer events itself", async ({ page }) => {
+      await boot(page);
+      await openDrawer(page);
+
+      // The exact regression that made PR #4 fail on a real device: the scroll
+      // container inherited `pointer-events: none` from `.hud > *`, so iOS Safari
+      // never treated it as the pan target. A synthetic wheel event does not notice.
+      const pe = await page
+        .locator(".right-stack")
+        .evaluate((el) => getComputedStyle(el).pointerEvents);
+      expect(pe, "the drawer opts out of hit-testing; iOS will give pans to the map").toBe(
+        "auto",
+      );
+    });
   });
-  await page.waitForTimeout(500);
-  await expect(page.locator('section[aria-label="データ状態"]')).toBeInViewport();
-});
+}
 
-test("E. CITY VIEW is visible and tappable without any horizontal scrolling", async ({ page }) => {
-  await boot(page, "?debug=1");
+test.describe("desktop keeps its stacked panels", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
 
-  const city = page.getByRole("button", { name: "CITY VIEW" });
-  await expect(city).toBeVisible();
-  await expect(city).toBeInViewport();
-
-  // It must not be parked inside the horizontally scrolling preset list.
-  const pinned = await city.evaluate((el) => Boolean(el.closest(".preset-pinned")));
-  expect(pinned, "CITY VIEW is inside the horizontal scroller and can be swiped away").toBe(true);
-
-  // And it does what it says: a low oblique camera over west Shinjuku. Read the real
-  // camera, not a label — the point of the button is the viewpoint it lands on.
-  await city.click();
-  await page.waitForTimeout(9_000);
-  const cam = await page.evaluate(() => {
-    const camera = (window as any).__viewer?.camera;
-    if (!camera) return null;
-    const c = camera.positionCartographic;
-    return {
-      lon: (c.longitude * 180) / Math.PI,
-      lat: (c.latitude * 180) / Math.PI,
-      height: c.height,
-      pitchDeg: (camera.pitch * 180) / Math.PI,
-    };
-  });
-  expect(cam, "no Cesium camera to read").not.toBeNull();
-  // West Shinjuku, roughly. Generous box: the assertion is "it flew to the city", not
-  // a re-statement of the preset's constants.
-  expect(cam!.lon).toBeGreaterThan(139.6);
-  expect(cam!.lon).toBeLessThan(139.78);
-  expect(cam!.lat).toBeGreaterThan(35.62);
-  expect(cam!.lat).toBeLessThan(35.73);
-  // Low and oblique: buildings are only legible from below ~2 km at a downward tilt
-  // shallow enough to see their sides.
-  expect(cam!.height).toBeLessThan(2_000);
-  expect(cam!.pitchDeg).toBeLessThan(-5);
-  expect(cam!.pitchDeg).toBeGreaterThan(-60);
-});
-
-test("the future-layer list is collapsed so diagnostics are not pushed off screen", async ({
-  page,
-}) => {
-  await boot(page);
-  await openDrawer(page);
-
-  const layers = page.locator('section[aria-label="レイヤー"]');
-  // Six V1-inoperable controls used to occupy roughly half the panel.
-  await expect(layers.getByRole("button", { name: /V2以降で追加予定/ })).toBeVisible();
-  await expect(layers.getByRole("button", { name: "バス Bus" })).toHaveCount(0);
-
-  await layers.getByRole("button", { name: /V2以降で追加予定/ }).click();
-  await expect(layers.getByRole("button", { name: "バス Bus" })).toBeVisible();
-});
-
-test.describe("on a 375px phone (iPhone SE / mini)", () => {
-  test.use({ viewport: { width: 375, height: 667 } });
-
-  test("CITY VIEW is still reachable in one tap", async ({ page }) => {
+  test("all three panels are visible at once and there is no tab strip", async ({ page }) => {
     await boot(page);
-    const city = page.getByRole("button", { name: "CITY VIEW" });
-    await expect(city).toBeVisible();
-    await expect(city).toBeInViewport();
-    await city.click();
-  });
+    await expect(page.locator(".drawer-tabs")).toHaveCount(0);
+    await expect(page.locator('section[aria-label="レイヤー"]')).toBeVisible();
+    await expect(page.locator('section[aria-label="3D建物"]')).toBeVisible();
+    await expect(page.locator('section[aria-label="データ状態"]')).toBeVisible();
 
-  test("the diagnostics are still reachable", async ({ page }) => {
-    await boot(page);
-    await openDrawer(page);
-    const buildings = page.locator('section[aria-label="3D建物"]');
-    await buildings.scrollIntoViewIfNeeded();
-    await expect(buildings).toBeInViewport();
+    // PERFORMANCE is present but collapsed, so nothing subscribes to a 2 Hz feed
+    // until someone asks for it.
+    const perf = page.locator('section[aria-label="パフォーマンス"]');
+    await expect(perf).toBeVisible();
+    await expect(perf.locator(".panel-body")).toHaveCount(0);
+    await perf.getByRole("button", { name: "パフォーマンス計測" }).click();
+    await expect(perf.getByText("FPS", { exact: true })).toBeVisible({ timeout: 20_000 });
   });
 });
